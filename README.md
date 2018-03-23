@@ -1,5 +1,5 @@
 # Transcription Factor Transformer Imputation (TFTI)
-* Alexander Ku$^*$, Gunjan Bain$^*$, Ashish Vaswani
+* Alexander Ku\*, Gunjan Bain\*, Ashish Vaswani
 * Corresponding email: `alexku@berkeley.edu`, `gunjan_baid@berkeley.edu`
 * And anyone else who wants to get involved!
 
@@ -10,16 +10,16 @@ While previous works have had considerable success with TF binding site predicti
 
 
 ### Problem Setting
-Suppose we have $N$ binding events to predict and we only know the ground truth for $K$ of them. We aim to develop an algorithm that can leverage the $K$ observed events to impute the remaining $N-K$.
+Suppose we have N binding events to predict and we only know the ground truth for K of them. We aim to develop an algorithm that can leverage the K observed events to impute the remaining N-K.
 
 ## Architecture
 
 The TFTI algorithm uses an augmented Transformer network architecture ([Vaswani *et al.*](http://papers.nips.cc/paper/7181-attention-is-all-you-need)) in a semi-generative manner. The key differences are the following:
 
-1. The decoder input is a latent tensor with the same dimensionality as the prediction logits. This tensor will encode the $K$ observed binding events and, through successive passes through the netwtork, will be transformed into our actual logits (presumably with the $N-K$ unobserved binding events imputed). In the pure predictive setting, the latent code is a zero-tensor.
+1. The decoder input is a latent tensor with the same dimensionality as the prediction logits. This tensor will encode the K observed binding events and, through successive passes through the netwtork, will be transformed into our actual logits (presumably with the N-K unobserved binding events imputed). In the pure predictive setting, the latent code is a zero-tensor.
 2. The decoder self-attention is no longer masked to be causal. We are interested in the mutual interaction between binding events.
 3. No decoder positional embeddings.
 
-<img src="images/transformer.png", height=400></img>
+![alt text](images/transformer.png)
 
 Above is the model architecture diagram of the Transformer. 
