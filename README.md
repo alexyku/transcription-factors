@@ -23,3 +23,41 @@ The TFTI algorithm uses an augmented Transformer network architecture ([Vaswani 
 ![alt text](images/transformer.png)
 
 Above is the model architecture diagram of the Transformer. 
+
+## Instructions
+
+```
+pip install tensor2tensor
+
+# See what problems, models, and hyperparameter sets are available.
+# You can easily swap between them (and add new ones).
+t2t-trainer --registry_help
+
+PROBLEM=genomics_binding_deepsea
+MODEL=tfti_transformer
+HPARAMS=transformer_base_single_gpu
+
+USR_DIR=tfti
+DATA_DIR=$HOME/t2t_data
+TMP_DIR=/tmp/t2t_datagen
+TRAIN_DIR=$HOME/t2t_train/$PROBLEM/$MODEL-$HPARAMS
+
+mkdir -p $DATA_DIR $TMP_DIR $TRAIN_DIR
+
+# Generate data
+t2t-datagen \
+  --t2t_usr_dir=$USR_DIR \
+  --data_dir=$DATA_DIR \
+  --tmp_dir=$TMP_DIR \
+  --problem=$PROBLEM
+
+# Train
+# *  If you run out of memory, add --hparams='batch_size=1024'.
+t2t-trainer \
+  --t2t_usr_dir=$USR_DIR \
+  --data_dir=$DATA_DIR \
+  --problems=$PROBLEM \
+  --model=$MODEL \
+  --hparams_set=$HPARAMS \
+  --output_dir=$TRAIN_DIR
+```
