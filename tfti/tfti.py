@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Transformer model from "Attention Is All You Need"."""
+"""Transcription factor transformer imputation (TFTI)."""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -103,7 +103,7 @@ class DeepseaProblem(problem.Problem):
   def maybe_download_and_unzip(self, tmp_dir):
     """Downloads deepsea data if it doesn't already exist."""
     url = ("http://deepsea.princeton.edu/media/code/"
-         "deepsea_train_bundle.v0.9.tar.gz")
+           "deepsea_train_bundle.v0.9.tar.gz")
     filename = "deepsea_train_bundle.v0.9.tar.gz"
     generator_utils.maybe_download(tmp_dir, filename, url)
     dirpath = os.path.join(tmp_dir, "deepsea_train")
