@@ -98,7 +98,7 @@ class DeepseaProblem(problem.Problem):
       assert len(inputs) == self.input_sequence_length
       assert len(targets) == self.num_output_predictions
       yield {"index": [i], "inputs": list(map(ord, inputs)),
-           "targets": list(map(int, targets))}
+             "targets": list(map(int, targets))}
   
   def maybe_download_and_unzip(self, tmp_dir):
     """Downloads deepsea data if it doesn't already exist."""
@@ -131,8 +131,14 @@ class DeepseaProblem(problem.Problem):
       model_hparams.chunk_size = self.default_chunk_size
     vocab_size = dna_encoder.DNAEncoder(model_hparams.chunk_size).vocab_size
     p = defaults
-    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)}
-    p.target_modality = (registry.Modalities.SYMBOL, self.num_output_classes)
+    # The Symbol modality reserves a symbol for "padding". Which is why the
+    # targets has one extra symbol. The latent targets have yet another
+    # symbol for "unknown" (for a total of two extra symbols).
+    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)
+                        "latent_targets": (registry.Modalities.SYMBOL,
+                                           self.num_output_classes + 2)}
+    p.target_modality = (registry.Modalities.SYMBOL,
+                         self.num_output_classes + 1)
     p.input_space_id = problem.SpaceID.DNA
     p.target_space_id = problem.SpaceID.GENERIC
   
@@ -150,12 +156,25 @@ class DeepseaProblem(problem.Problem):
     """Preprocess the model inputs."""
     encoder = dna_encoder.DNAEncoder(hparams.chunk_size)
     out_size = int(np.ceil(self.input_sequence_length / hparams.chunk_size))
-    def to_kmer_ids(inputs):
+    def to_ids(inputs):
       return np.array([
         encoder.encode("".join([chr(x) for x in row]))
         for row in inputs], dtype=np.int64)
     example["inputs"] = tf.py_func(
-      to_kmer_ids, [example["inputs"]], [tf.int64], stateful=False)[0]
+      to_ids, [example["inputs"]], [tf.int64], stateful=False)[0]
+    targets = example["targets"]
+    # Because the targets are natively binary (0 or 1), we add 1 to each to
+    # preserve the meaning of 0 (the "padding" id).
+    example["targets"] += 1
+    # The latent target is a tensor of 3s (the "unknown" id).
+    # TODO(Alex): Create partially-observed latent targets and set the observed
+    # targets to 0 (the "padding" id).
+    # We could add an hparam called "latent_target_dropout" that indicates the
+    # probability of dropping a ground-truth target when computing the latent
+    # target. We could also explore tempering this parameter. Gradually
+    # increasing the it over time.
+    example["latent_targets"] = 3 * tf.ones(
+        common_layers.shape_list(example["targets"]))
     return example
 
 
@@ -202,16 +221,14 @@ class TftiTransformer(transformer.Transformer):
 	  else:
 	      encoder_output, encoder_decoder_attention_bias = (None, None)
 
-	  targets = features["targets"]
-	  targets = common_layers.flatten4d3d(targets)
-	  # Latent vector to be transformed into logits.
-	  # See the docstring. For now, these are zeros.
-	  # TODO(Alex): Remove positional embeddings.
-	  latent_targets = tf.zeros(common_layers.shape_list(targets))
+	  # Latent tensor to be transformed into logits.
+    # TODO(Alex): Remove decoder positional embeddings.
+    latent_targets = features["latent_targets"]
+    latent_targets = common_layers.flatten4d3d(latent_targets)
 	  
 	  decoder_input, _ = transformer_prepare_decoder(
 	      latent_targets, hparams, features=features)
-	  # No masking bias, full self-attention.
+	  # No masking bias, full decoder self-attention.
 	  decoder_self_attention_bias = None
 
 	  decoder_output = self.decode(
