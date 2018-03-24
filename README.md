@@ -1,5 +1,5 @@
 # Transcription Factor Transformer Imputation (TFTI)
-* Alexander Ku\*, Gunjan Baid\*, J. Weston Hughes, Alyssa Morrow, Ashish Vaswani
+* Alexander Ku\*, Gunjan Baid\*, J. Weston Hughes, Alyssa Morrow, Ashish Vaswani, Joseph E. Gonzalez, Anthony D. Joseph, Nir Yosef
 * Corresponding email: `alexku@berkeley.edu`, `gunjan_baid@berkeley.edu`
 * And anyone else who wants to get involved!
 
