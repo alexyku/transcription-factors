@@ -146,7 +146,7 @@ class DeepseaProblem(problem.Problem):
   def example_reading_spec(self):
     """Reader spec for tf-record examples."""
     data_fields = {
-      "index": tf.FixedLenFeature([], tf.int64),
+      "index": tf.FixedLenFeature([1], tf.int64),
       "inputs": tf.FixedLenFeature([self.input_sequence_length], tf.int64),
       "targets": tf.FixedLenFeature([self.num_output_predictions], tf.int64),
     }
@@ -155,27 +155,31 @@ class DeepseaProblem(problem.Problem):
   
   def preprocess_example(self, example, mode, hparams):
     """Preprocess the model inputs."""
-    encoder = dna_encoder.DNAEncoder(hparams.chunk_size)
-    out_size = int(np.ceil(self.input_sequence_length / hparams.chunk_size))
-    def to_ids(inputs):
-      return np.array([
-        encoder.encode("".join([chr(x) for x in row]))
-        for row in inputs], dtype=np.int64)
-    example["inputs"] = tf.py_func(
-      to_ids, [example["inputs"]], [tf.int64], stateful=False)[0]
+    inputs = example["inputs"]
     targets = example["targets"]
+    encoder = dna_encoder.DNAEncoder(hparams.chunk_size)
+    def to_ids(inputs):
+      ids = encoder.encode("".join(map(chr, inputs)))
+      return np.array(ids, dtype=np.int64)
+    [inputs] = tf.py_func(to_ids, [inputs], [tf.int64], stateful=False)
+    # Reshape to the [p0, p1, channels] modality convention.
+    out_size = int(np.ceil(self.input_sequence_length / hparams.chunk_size))
+    inputs = tf.reshape(inputs, [out_size, 1, 1])
+    targets = tf.reshape(targets, [self.num_output_predictions, 1, 1])
     # Because the targets are natively binary (0 or 1), we add 1 to each to
     # preserve the meaning of 0 (the "padding" id).
-    example["targets"] += 1
+    targets += 1
     # The latent target is a tensor of 3s (the "unknown" id).
     # TODO(Alex): Create partially-observed latent targets and set the observed
-    # targets to 0 (the "padding" id).
-    # We could add an hparam called "latent_target_dropout" that indicates the
-    # probability of dropping a ground-truth target when computing the latent
-    # target. We could also explore tempering this parameter. Gradually
-    # increasing the it over time.
-    example["latent_targets"] = 3 * tf.ones(
-        common_layers.shape_list(example["targets"]))
+    # targets to 0 (the "padding" id). We could add an hparam called
+    # "latent_target_dropout" that indicates the probability of dropping a
+    # ground-truth target when computing the latent target. We could also
+    # explore tempering this parameter. Gradually increasing the it over time.
+    latent_targets = 3 * tf.ones(
+        common_layers.shape_list(targets), dtype=tf.int64)
+    example["inputs"] = inputs
+    example["targets"] = targets
+    example["latent_targets"] = latent_targets
     return example
 
 
@@ -189,9 +193,8 @@ class TftiTransformer(transformer.Transformer):
   
   A latent code is fed into the decoder. Suppose we have N tf binding
   predictions to make, and we only know the ground truth for K of them.
-  Then for known tfs, the latent will be [1, 0, 0] for "binding" abd
-  [0, 1, 0] for "no binding". For unknown tfs the latent will be [0, 0, 1].
-  Thus the dimensionality of the latent code is [batch_size, num_tfs, 3].
+  Then for known tfs, the latent id be 1 for "positive" and 2 for "negative".
+  For "unknown" tfs the latent id will be 3 (0 is the "padding" id).
   
   For training, we artificially mask known tfs, get the model to impute,
   and compute the loss w.r.t. the imputed predictions.
@@ -227,7 +230,7 @@ class TftiTransformer(transformer.Transformer):
     latent_targets = features["latent_targets"]
     latent_targets = common_layers.flatten4d3d(latent_targets)
     
-    decoder_input, _ = transformer_prepare_decoder(
+    decoder_input, _ = transformer.transformer_prepare_decoder(
         latent_targets, hparams, features=features)
     # No masking bias, full decoder self-attention.
     decoder_self_attention_bias = None
@@ -238,7 +241,7 @@ class TftiTransformer(transformer.Transformer):
         encoder_decoder_attention_bias,
         decoder_self_attention_bias,
         hparams,
-        nonpadding=features_to_nonpadding(features, "targets"))
+        nonpadding=transformer.features_to_nonpadding(features, "targets"))
 
     expected_attentions = features.get("expected_attentions")
     if expected_attentions is not None:
