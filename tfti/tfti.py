@@ -26,6 +26,7 @@ import tarfile
 
 import h5py
 import scipy
+import numpy as np
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
 
@@ -134,7 +135,7 @@ class DeepseaProblem(problem.Problem):
     # The Symbol modality reserves a symbol for "padding". Which is why the
     # targets has one extra symbol. The latent targets have yet another
     # symbol for "unknown" (for a total of two extra symbols).
-    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)
+    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size),
                         "latent_targets": (registry.Modalities.SYMBOL,
                                            self.num_output_classes + 2)}
     p.target_modality = (registry.Modalities.SYMBOL,
@@ -222,9 +223,9 @@ class TftiTransformer(transformer.Transformer):
 	      encoder_output, encoder_decoder_attention_bias = (None, None)
 
 	  # Latent tensor to be transformed into logits.
-    # TODO(Alex): Remove decoder positional embeddings.
-    latent_targets = features["latent_targets"]
-    latent_targets = common_layers.flatten4d3d(latent_targets)
+          # TODO(Alex): Remove decoder positional embeddings.
+	  latent_targets = features["latent_targets"]
+	  latent_targets = common_layers.flatten4d3d(latent_targets)
 	  
 	  decoder_input, _ = transformer_prepare_decoder(
 	      latent_targets, hparams, features=features)
