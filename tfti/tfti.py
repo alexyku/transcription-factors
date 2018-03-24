@@ -25,6 +25,7 @@ import tarfile
 # Dependency imports
 
 import h5py
+import numpy as np
 import scipy
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -80,7 +81,7 @@ class DeepseaProblem(problem.Problem):
       tmp = h5py.File(filename)
       inputs = tmp["trainxdata"]
       targets = tmp["traindata"]
-      for i in range(inputs.shape[2]):
+      for i in xrange(inputs.shape[2]):
         yield (self.stringify(inputs[:, :, i]),
              targets[:, i])
     def valid_generator():
@@ -88,7 +89,7 @@ class DeepseaProblem(problem.Problem):
       tmp = scipy.io.loadmat(filename)
       inputs = tmp['validxdata']
       targets = tmp['validdata']
-      for i in range(inputs.shape[0]):
+      for i in xrange(inputs.shape[0]):
         yield (self.stringify(inputs[i].transpose([1, 0])),
              targets[i])
     generator = train_generator if is_training else valid_generator
@@ -113,7 +114,7 @@ class DeepseaProblem(problem.Problem):
       tarfile.open(filepath, "r:gz").extractall(tmp_dir)
     else:
       tf.logging.info(
-      	  f"Not extracting archive, directory already found: {dirpath}")
+          f"Not extracting archive, directory already found: {dirpath}")
     return dirpath
   
   def generate_data(self, data_dir, tmp_dir, task_id=-1):
@@ -134,7 +135,7 @@ class DeepseaProblem(problem.Problem):
     # The Symbol modality reserves a symbol for "padding". Which is why the
     # targets has one extra symbol. The latent targets have yet another
     # symbol for "unknown" (for a total of two extra symbols).
-    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)
+    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size),
                         "latent_targets": (registry.Modalities.SYMBOL,
                                            self.num_output_classes + 2)}
     p.target_modality = (registry.Modalities.SYMBOL,
@@ -201,50 +202,50 @@ class TftiTransformer(transformer.Transformer):
   """
   
   def body(self, features):
-	  """Transformer main model_fn.
-	  Args:
-	    features: Map of features to the model. Should contain the following:
-	        "inputs": Transformer inputs [batch_size, input_length, hidden_dim]
-	        "tragets": Target decoder outputs.
-	            [batch_size, decoder_length, hidden_dim]
-	        "target_space_id"
-	  Returns:
-	    Final decoder representation. [batch_size, decoder_length, hidden_dim]
-	  """
-	  hparams = self._hparams
+    """Transformer main model_fn.
+    Args:
+      features: Map of features to the model. Should contain the following:
+          "inputs": Transformer inputs [batch_size, input_length, hidden_dim]
+          "tragets": Target decoder outputs.
+              [batch_size, decoder_length, hidden_dim]
+          "target_space_id"
+    Returns:
+      Final decoder representation. [batch_size, decoder_length, hidden_dim]
+    """
+    hparams = self._hparams
 
-	  if self.has_input:
-	      inputs = features["inputs"]
-	      target_space = features["target_space_id"]
-	      encoder_output, encoder_decoder_attention_bias = self.encode(
-	          inputs, target_space, hparams, features=features)
-	  else:
-	      encoder_output, encoder_decoder_attention_bias = (None, None)
+    if self.has_input:
+        inputs = features["inputs"]
+        target_space = features["target_space_id"]
+        encoder_output, encoder_decoder_attention_bias = self.encode(
+            inputs, target_space, hparams, features=features)
+    else:
+        encoder_output, encoder_decoder_attention_bias = (None, None)
 
-	  # Latent tensor to be transformed into logits.
+    # Latent tensor to be transformed into logits.
     # TODO(Alex): Remove decoder positional embeddings.
     latent_targets = features["latent_targets"]
     latent_targets = common_layers.flatten4d3d(latent_targets)
-	  
-	  decoder_input, _ = transformer_prepare_decoder(
-	      latent_targets, hparams, features=features)
-	  # No masking bias, full decoder self-attention.
-	  decoder_self_attention_bias = None
+    
+    decoder_input, _ = transformer_prepare_decoder(
+        latent_targets, hparams, features=features)
+    # No masking bias, full decoder self-attention.
+    decoder_self_attention_bias = None
 
-	  decoder_output = self.decode(
-	      decoder_input,
-	      encoder_output,
-	      encoder_decoder_attention_bias,
-	      decoder_self_attention_bias,
-	      hparams,
-	      nonpadding=features_to_nonpadding(features, "targets"))
+    decoder_output = self.decode(
+        decoder_input,
+        encoder_output,
+        encoder_decoder_attention_bias,
+        decoder_self_attention_bias,
+        hparams,
+        nonpadding=features_to_nonpadding(features, "targets"))
 
-	  expected_attentions = features.get("expected_attentions")
-	  if expected_attentions is not None:
-	    attention_loss = common_attention.encoder_decoder_attention_loss(
-	        expected_attentions, self.attention_weights,
-	        hparams.expected_attention_loss_type,
-	        hparams.expected_attention_loss_multiplier)
-	    return decoder_output, {"attention_loss": attention_loss}
+    expected_attentions = features.get("expected_attentions")
+    if expected_attentions is not None:
+      attention_loss = common_attention.encoder_decoder_attention_loss(
+          expected_attentions, self.attention_weights,
+          hparams.expected_attention_loss_type,
+          hparams.expected_attention_loss_multiplier)
+      return decoder_output, {"attention_loss": attention_loss}
 
-	  return decoder_output
+    return decoder_output
