@@ -294,7 +294,7 @@ class A549DeepseaProblem(DeepseaProblem):
     # Indices come from the file at 
     # media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/nmeth.3547-S3.xlsx
     # and include all TF rows (between 128 TO 817) that list A549 as the cell type.
-    # Specifically, the index is the row number in the spreadsheet - 2.
+    # Specifically, the index is the row number in the spreadsheet - 3.
     A549_indices = np.array(list(range(170, 197)) + list(range(401, 406)) + [720, 721, 763])
 
     # Keep only targets and latents corresponding to A549.
