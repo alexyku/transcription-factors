@@ -42,13 +42,13 @@ from tensor2tensor.utils import registry
 import tensorflow as tf
 
 
-@registry.register_symbol_modality("position_sensitive")
-class PositionSensitiveSymbolModality(modalities.SymbolModality):
-  """Symbol modality for position sensitive sequences.
+@registry.register_symbol_modality("nonsequential")
+class NonsequentialSymbolModality(modalities.SymbolModality):
+  """Symbol modality for nonsequential sequences.
 
   Use this modality when an symbol id in one position means something completely
   different in a different position. That is an id X in position I has a 
-  different meaning than the same id X at position J.
+  different meaning than the same id X at position J (e.g., a binary label set).
 
   To put this concretely, an id of 1 for transcription factor A should not map
   to the same embedding as an id of 1 for transcription factor B.
@@ -65,8 +65,8 @@ class PositionSensitiveSymbolModality(modalities.SymbolModality):
 
   @property
   def name(self):
-    return "position_sensitive_symbol_modality_%d_%d" % (self._vocab_size,
-                                                         self._body_input_depth)
+    return "nonsequential_symbol_modality_%d_%d" % (self._vocab_size,
+                                                    self._body_input_depth)
 
   def embedding(self, x, vocab_size, dense_size, **kwargs):
     """Each (position, id) pair gets its own embedding."""
@@ -159,7 +159,7 @@ class DeepseaProblem(problem.Problem):
     return 4  # ACTG channels (in that order).
 
   @property
-  def position_sensitive_targets(self):
+  def nonsequential_targets(self):
     return True
   
   def stringify(self, one_hot_seq):
@@ -233,8 +233,8 @@ class DeepseaProblem(problem.Problem):
     # targets has an extra symbol. :atent targets have yet another
     # symbol for "unknown" -- two extra symbols.
     target_and_latent_modality = registry.Modalities.SYMBOL
-    if self.position_sensitive_targets:
-      target_and_latent_modality += ":position_sensitive"
+    if self.nonsequential_targets:
+      target_and_latent_modality += ":nonsequential"
     p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size),
                         "latents": (target_and_latent_modality,
                                     self.num_output_classes + 2)}
@@ -273,7 +273,8 @@ class DeepseaProblem(problem.Problem):
     # Latent dropout is the probability of dropping a ground-truth
     # target when computing the latent.
     dropout_prob = hparams.latent_dropout
-    boolean_mask = tf.random_uniform(common_layers.shape_list(targets)) < dropout_prob
+    boolean_mask = (tf.random_uniform(
+        common_layers.shape_list(targets)) < dropout_prob)
     mask = tf.to_float(boolean_mask)
     # Replace some labels with 3, the unknown ID.
     latents = targets * (1 - mask) + 3 * mask
