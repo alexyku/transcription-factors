@@ -284,6 +284,28 @@ class DeepseaProblem(problem.Problem):
     return example
 
 
+@registry.register_problem("genomics_binding_deepsea_tf")
+class TranscriptionFactorDeepseaProblem(DeepseaProblem):
+  """Only transcription factors included in the label space."""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    # Indices for TF labels. Indices come from the file at
+    # media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/nmeth.3547-S3.xlsx
+    # and include all TF rows (between 128 to 817).
+    # Specifically, the index is the row number in the spreadsheet - 3.
+    start = 125
+    end = 814
+
+    # Keep only targets and latents corresponding to TFs.
+    targets = example["targets"][start:end + 1]
+    latents = example["latents"][start:end + 1]
+
+    example["targets"] = targets
+    example["latents"] = latents
+    return example
+
+
 @registry.register_problem("genomics_binding_deepsea_a549")
 class A549DeepseaProblem(DeepseaProblem):
   """Cell type specific label space."""
