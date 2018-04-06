@@ -290,10 +290,16 @@ class A549DeepseaProblem(DeepseaProblem):
 
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
-    targets = example["targets"]
-    latents = example["latents"]
+    # Indices for TF labels specific to A549 cell type.
+    # Indices come from the file at 
+    # media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/nmeth.3547-S3.xlsx
+    # and include all TF rows (between 127 TO 817) that list A549 as the cell type.
+    # Specifically, the index is the row number in the spreadsheet - 2.
+    A549_indices = np.array(list(range(170, 197)) + list(range(401, 406)) + [720, 721, 763])
 
-    # TODO (Gunjan): Slice out indices for A549 labels.
+    # Keep only targets and latents corresponding to A549.
+    targets = tf.gather(example["targets"], A549_indices)
+    latents = tf.gather(example["latents"], A549_indices)
 
     example["targets"] = targets
     example["latents"] = latents
