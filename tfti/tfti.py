@@ -136,6 +136,11 @@ class DeepseaProblem(problem.Problem):
     # This is only used if "chunk_size" is
     # not specified in the model hparams.
     return 4  # n-gram/k-mer size.
+
+  @property
+  def default_latent_dropout(self):
+    # Pure inference setting.
+    return 1.0
   
   @property
   def num_output_predictions(self):
@@ -220,6 +225,8 @@ class DeepseaProblem(problem.Problem):
     """Augment the hparams for this problem."""
     if not model_hparams.get("chunk_size"):
       model_hparams.chunk_size = self.default_chunk_size
+    if not model_hparams.get("latent_dropout"):
+      model_hparams.latent_dropout = self.default_latent_dropout
     vocab_size = dna_encoder.DNAEncoder(model_hparams.chunk_size).vocab_size
     p = defaults
     # Symbol modality reserves 0 as "padding". Which is why the
@@ -263,14 +270,31 @@ class DeepseaProblem(problem.Problem):
     # (i.e., 0->1 and 1->2) to preserve the meaning of 0 (the "padding" id).
     targets += 1
 
-    # TODO(Alex): Create partially-observed latent targets and set the observed
-    # targets to 0 (the "padding" id). We could introduce an hparam called
-    # "latent_dropout". That is, the probability of dropping a ground-truth
+    # Latent dropout is the probability of dropping a ground-truth
     # target when computing the latent.
+    dropout_prob = hparams.latent_dropout
+    boolean_mask = tf.random_uniform(common_layers.shape_list(targets)) < dropout_prob
+    mask = tf.to_float(boolean_mask)
+    # Replace some labels with 3, the unknown ID.
+    latents = targets * (1 - mask) + 3 * mask
 
-    # The latent is a tensor of 3s (the "unknown" id).
-    latents = 3 * tf.ones(common_layers.shape_list(targets), dtype=tf.int64)
     example["inputs"] = inputs
+    example["targets"] = targets
+    example["latents"] = latents
+    return example
+
+
+@registry.register_problem("genomics_binding_deepsea_a549")
+class A549DeepseaProblem(DeepseaProblem):
+  """Cell type specific label space."""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    targets = example["targets"]
+    latents = example["latents"]
+
+    # TODO (Gunjan): Slice out indices for A549 labels.
+
     example["targets"] = targets
     example["latents"] = latents
     return example
