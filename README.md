@@ -35,8 +35,8 @@ t2t-trainer --registry_help
 
 PROBLEM=genomics_binding_deepsea
 MODEL=tfti_transformer
-HPARAMS_SET=transformer_base_single_gpu
-HPARAMS='batch_size=128,num_encoder_layers=4,num_decoder_layers=2'
+HPARAMS_SET=tfti_transformer_debug
+HPARAMS=''
 
 USR_DIR=tfti
 DATA_DIR=$HOME/t2t_data
