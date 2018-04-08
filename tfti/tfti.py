@@ -119,7 +119,7 @@ class SetSymbolModality(modalities.SymbolModality):
       return tf.reshape(logits, body_output_shape[:-1] + [1, self._vocab_size])
 
 
-@registry.register_problem("genomics_binding_deepsea_base")
+@registry.register_problem("genomics_binding_deepsea")
 class DeepseaProblem(problem.Problem):
   """N-gram/k-mer embedded deepsea data."""
     
@@ -155,6 +155,9 @@ class DeepseaProblem(problem.Problem):
   @property
   def input_sequence_depth(self):
     return 4  # ACTG channels (in that order).
+
+  def dataset_filename(self):
+    return "genomics_binding_deepsea"
   
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string."""
@@ -272,7 +275,7 @@ class DeepseaProblem(problem.Problem):
         common_layers.shape_list(targets)) < dropout_prob)
     mask = tf.to_float(boolean_mask)
     # Replace some labels with 3, the unknown ID.
-    latents = targets * (1 - mask) + 3 * mask
+    latents = tf.to_int32(tf.to_float(targets) * (1 - mask) + 3 * mask)
 
     example["inputs"] = inputs
     example["targets"] = targets
@@ -292,8 +295,8 @@ class TranscriptionFactorDeepseaProblem(DeepseaProblem):
     # and include all TF rows (between 128 to 817).
     # Specifically, the index is the row number in the spreadsheet - 3.
     start, end = (125, 814)
-    example["targets"] = targets[start:end + 1]
-    example["latents"] = latents[start:end + 1]
+    example["targets"] = example["targets"][start:end + 1]
+    example["latents"] = example["latents"][start:end + 1]
     return example
 
 
@@ -397,6 +400,7 @@ def tfti_transformer_base():
   hparams.chunk_size = 4
   hparams.latent_dropout = 1.0
   hparams.nonsequential_targets = True
+  return hparams
 
 
 @registry.register_hparams("tfti_transformer_debug")
@@ -411,4 +415,5 @@ def tfti_transformer_debug():
   hparams.chunk_size = 4
   hparams.latent_dropout = 1.0
   hparams.nonsequential_targets = True
+  return hparams
   
