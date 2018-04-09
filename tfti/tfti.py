@@ -37,6 +37,7 @@ from tensor2tensor.data_generators import text_encoder
 from tensor2tensor.layers import common_layers
 from tensor2tensor.layers import modalities
 from tensor2tensor.models import transformer
+from tensor2tensor.utils import metrics
 from tensor2tensor.utils import registry
 
 import tensorflow as tf
@@ -62,6 +63,36 @@ class PositionSensitiveSymbolModality(modalities.SymbolModality):
   generally 3 [PAD, NEG, POS] or 4 [PAD, NEG, POS, UNK], which is relatively
   small.
   """
+
+  def loss(self, logits, targets):
+    with tf.variable_scope('auc', reuse=True):
+      lt = tf.nn.softmax(logits)
+      lt = tf.squeeze(lt)
+      lt = tf.transpose(lt, [1, 0, 2])
+      tt = tf.squeeze(targets)
+      tt = tf.transpose(tt, [1, 0])
+      tt = tf.cast(tt, dtype=tf.float32)
+      # TODO(Weston): Filter out irrelevant scores
+      f = lambda x: tf.metrics.auc(labels=x[1], predictions=x[0], weights=None)
+      _, auc = tf.map_fn(f, (lt[:,:,2], tt-1)) 
+
+      mean_auc = tf.reduce_mean(auc)
+      tf.summary.scalar('auc', mean_auc)
+    
+    # TODO(alexyku): Where should this variable go so we can change it from command line?
+    pos_weight = 25
+
+    def weight_fn(labels):
+      weights = common_layers.weights_nonzero(labels)
+      weights += (tf.constant(pos_weight - 1, dtype=tf.float32) 
+                  * tf.to_float(tf.equal(labels, 2)))
+      return weights
+
+    return common_layers.padded_cross_entropy(
+        logits,
+        targets,
+        self._model_hparams.label_smoothing,
+        weights_fn=weight_fn)
 
   @property
   def name(self):
@@ -156,7 +187,27 @@ class DeepseaProblem(problem.Problem):
   @property
   def position_sensitive_targets(self):
     return True
-  
+
+  def eval_metrics(self):
+    return [metrics.Metrics.AUC]
+ 
+  def input_fn(self,
+               mode,
+               hparams,
+               data_dir=None,
+               params=None,
+               config=None,
+               dataset_kwargs=None):
+    # if mode == tf.estimator.ModeKeys.EVAL:
+    #   tf.variables_initializer(var_list=tf.get_collection(tf.GraphKeys.METRIC_VARIABLES)).run()
+    return problem.Problem.input_fn(self,
+               mode,
+               hparams,
+               data_dir,
+               params,
+               config,
+               dataset_kwargs)
+ 
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string."""
     ids = one_hot_seq.dot(np.arange(1, 5))
