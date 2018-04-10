@@ -35,8 +35,8 @@ t2t-trainer --registry_help
 
 PROBLEM=genomics_binding_deepsea
 MODEL=tfti_transformer
-HPARAMS_SET=transformer_base_single_gpu
-HPARAMS='batch_size=128,num_encoder_layers=4,num_decoder_layers=2'
+HPARAMS_SET=tfti_transformer_base
+HPARAMS=''
 
 USR_DIR=tfti
 DATA_DIR=$HOME/t2t_data
@@ -62,4 +62,30 @@ t2t-trainer \
   --hparams_set=$HPARAMS_SET \
   --hparams=$HPARAMS \
   --output_dir=$TRAIN_DIR
+```
+
+For debugging on dummy data:
+
+```
+PROBLEM=genomics_binding_deepsea_tf
+MODEL=tfti_transformer
+HPARAMS_SET=tfti_transformer_debug
+HPARAMS=''
+
+USR_DIR=./tfti
+DATA_DIR=./tfti/dev
+TMP_DIR=/tmp/t2t_datagen
+TRAIN_DIR=$HOME/t2t_train/$PROBLEM/$MODEL-$HPARAMS
+
+mkdir -p $DATA_DIR $TMP_DIR $TRAIN_DIR
+
+# Train
+t2t-trainer \
+  --t2t_usr_dir=$USR_DIR \
+  --data_dir=$DATA_DIR \
+  --problems=$PROBLEM \
+  --model=$MODEL \
+  --hparams_set=$HPARAMS_SET \
+  --output_dir=$TRAIN_DIR \
+  --hparams=$HPARAMS
 ```
