@@ -42,34 +42,26 @@ from tensor2tensor.utils import registry
 import tensorflow as tf
 
 
-@registry.register_symbol_modality("position_sensitive")
-class PositionSensitiveSymbolModality(modalities.SymbolModality):
-  """Symbol modality for position sensitive sequences.
+@registry.register_symbol_modality("nonsequential")
+class SetSymbolModality(modalities.SymbolModality):
+  """Symbol modality for nonsequential sequences (i.e., sets).
 
-  Use this modality when an symbol id in one position means something completely
-  different in a different position. That is an id X in position I has a 
-  different meaning than the same id X at position J.
+  Use this modality where there is no temporal component to the sequence, but
+  each position in the sequence has the same vocab size. For example, suppose we
+  have a binary label set, a label of 1 for prediction task i might mean
+  something different from a 1 for prediction task j.
 
-  To put this concretely, an id of 1 for transcription factor A should not map
-  to the same embedding as an id of 1 for transcription factor B.
-
-  To remedy this, we do two fold:
-  - Each (position, id) pair gets its own embedding.
-  - Each position gets its own logit projection var.
-
-  This is quite expensive, and is only practical if the number of positions
-  and/or vocab size are not too big. In the tfti case, the vocab size is
-  generally 3 [PAD, NEG, POS] or 4 [PAD, NEG, POS, UNK], which is relatively
-  small.
+  In this case, each (label, prediction task) pair should receive its own
+  embedding vector. Similarily, each logit gets its own projection variable.
   """
 
   @property
   def name(self):
-    return "position_sensitive_symbol_modality_%d_%d" % (self._vocab_size,
-                                                         self._body_input_depth)
+    return "nonsequential_symbol_modality_%d_%d" % (self._vocab_size,
+                                                    self._body_input_depth)
 
   def embedding(self, x, vocab_size, dense_size, **kwargs):
-    """Each (position, id) pair gets its own embedding."""
+    """Each (position, ID) pair gets its own embedding."""
     shape_list = common_layers.shape_list(x)
     # If we had an extra channel dimensions, assume they are 1.
     if len(shape_list) > 2:
@@ -89,7 +81,7 @@ class PositionSensitiveSymbolModality(modalities.SymbolModality):
       ret = tf.expand_dims(ret, 2)
       if self._model_hparams.multiply_embedding_mode == "sqrt_depth":
         ret *= self._body_input_depth**0.5
-      # No embedding for padding ids (set to zero).
+      # No embedding for padding IDs (set to zero).
       ret *= tf.expand_dims(tf.to_float(tf.not_equal(x, 0)), -1)
       return ret
 
@@ -139,8 +131,14 @@ class DeepseaProblem(problem.Problem):
 
   @property
   def default_latent_dropout(self):
-    # Pure inference setting.
+    # Can be overwritten in model hparams.
+    # Default is pure inference setting.
     return 1.0
+
+  @property
+  def default_nonsequential_targets(self):
+    # Can be overwritten in model hparams.
+    return True
   
   @property
   def num_output_predictions(self):
@@ -158,9 +156,8 @@ class DeepseaProblem(problem.Problem):
   def input_sequence_depth(self):
     return 4  # ACTG channels (in that order).
 
-  @property
-  def position_sensitive_targets(self):
-    return True
+  def dataset_filename(self):
+    return "genomics_binding_deepsea"
   
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string."""
@@ -227,14 +224,16 @@ class DeepseaProblem(problem.Problem):
       model_hparams.chunk_size = self.default_chunk_size
     if not model_hparams.get("latent_dropout"):
       model_hparams.latent_dropout = self.default_latent_dropout
+    if not model_hparams.get("nonsequential_targets"):
+      model_hparams.nonsequential_targets = self.default_nonsequential_targets
     vocab_size = dna_encoder.DNAEncoder(model_hparams.chunk_size).vocab_size
     p = defaults
     # Symbol modality reserves 0 as "padding". Which is why the
-    # targets has an extra symbol. :atent targets have yet another
-    # symbol for "unknown" -- two extra symbols.
+    # targets has an extra symbol. Latent targets have yet another
+    # symbol for "unknown" - so two extra symbols.
     target_and_latent_modality = registry.Modalities.SYMBOL
-    if self.position_sensitive_targets:
-      target_and_latent_modality += ":position_sensitive"
+    if model_hparams.nonsequential_targets:
+      target_and_latent_modality += ":nonsequential"
     p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size),
                         "latents": (target_and_latent_modality,
                                     self.num_output_classes + 2)}
@@ -267,16 +266,16 @@ class DeepseaProblem(problem.Problem):
     inputs = tf.reshape(inputs, [out_size, 1, 1])
     targets = tf.reshape(targets, [self.num_output_predictions, 1, 1])
     # Targets are natively binary (i.e., 0 or 1), we add one to each
-    # (i.e., 0->1 and 1->2) to preserve the meaning of 0 (the "padding" id).
+    # (i.e., 0->1 and 1->2) to preserve the meaning of 0, the "padding" ID.
     targets += 1
-
     # Latent dropout is the probability of dropping a ground-truth
     # target when computing the latent.
     dropout_prob = hparams.latent_dropout
-    boolean_mask = tf.random_uniform(common_layers.shape_list(targets)) < dropout_prob
+    boolean_mask = (tf.random_uniform(
+        common_layers.shape_list(targets)) < dropout_prob)
     mask = tf.to_float(boolean_mask)
     # Replace some labels with 3, the unknown ID.
-    latents = targets * (1 - mask) + 3 * mask
+    latents = tf.to_int32(tf.to_float(targets) * (1 - mask) + 3 * mask)
 
     example["inputs"] = inputs
     example["targets"] = targets
@@ -305,30 +304,53 @@ class HelaS3DeepseaProblem(DeepseaProblem):
     targets = tf.gather(example["targets"], helas3_indices)
     latents = tf.gather(example["latents"], helas3_indices)
 
-    example["targets"] = targets
-    example["latents"] = latents
+    
+@registry.register_problem("genomics_binding_deepsea_tf")
+class TranscriptionFactorDeepseaProblem(DeepseaProblem):
+  """Only transcription factors included in the label space."""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    # Indices for TF labels. Indices come from the file at
+    # (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
+    # nmeth.3547-S3.xlsx)
+    # and include all TF rows (between 128 to 817).
+    # Specifically, the index is the row number in the spreadsheet - 3.
+    start, end = (125, 814)
+    example["targets"] = example["targets"][start:end + 1]
+    example["latents"] = example["latents"][start:end + 1]
+    return example
+
+  
+@registry.register_problem("genomics_binding_deepsea_chromatin")
+class ChromatinDeepseaProblem(DeepseaProblem):
+  """DNase and histone labels are always observed."""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    # TODO (Alex): Slice out range [0, 125) and [815, 919).
     return example
 
 
 @registry.register_model("tfti_transformer")
 class TftiTransformer(transformer.Transformer):
   """A stack of transformer layers.
+
+  Transforms a set of (partially observed) latent labels into a complete label
+  set. These are the input and outputs of the model:
+  - Encoder inputs: Embedded DNA-sequence.
+  - Encoder output: None.
+  - Decoder inputs: Partially observed latent labels in [NEG, POS, UNK], where
+    the UNK labels are to be imputed by the decoder.
+  - Decoder output: Fully imputed labels in [NEG, POS].
+
+  We compute the loss with respect to the entire imputed label (so that the
+  model learns an identity mapping for the observed latents), but evaluate the
+  AUC and AUPRC on the imputed values.
   
-  This is a semi-generative model for imputing binding labels.
-  That is, given that you know some transcription factors bind,
-  can you predict whether other (unobserved) tf's bind.
-  
-  A latent code is fed into the decoder. Suppose we have N tf binding
-  predictions to make, and we only know the ground truth for K of them.
-  Then for known tfs, the latent id be 1 for "positive" and 2 for "negative".
-  For "unknown" tfs the latent id will be 3 (0 is the "padding" id).
-  
-  For training, we artificially mask known tfs, get the model to impute,
-  and compute the loss w.r.t. the imputed predictions.
-  
-  This is motivated by the idea that a model should consider all the information
-  it has to make a prediction. That is, both the sequence, and the prediction
-  being made for other tfs.
+  The imputation method is motivated by the idea that a model should consider
+  all the information it has to make a prediction. That is, both the
+  DNA-sequence, and the labels for the binding events you have.
   """
   
   def body(self, features):
@@ -376,3 +398,33 @@ class TftiTransformer(transformer.Transformer):
       return decoder_output, {"attention_loss": attention_loss}
 
     return decoder_output
+  
+
+@registry.register_hparams("tfti_transformer_base")
+def tfti_transformer_base():
+  hparams = transformer.transformer_base()
+  # General hparams.
+  hparams.batch_size = 128
+  # Transformer hparams.
+  hparams.num_encoder_layers = 6
+  hparams.num_decoder_layers = 4
+  # TFTI hparams.
+  hparams.chunk_size = 4
+  hparams.latent_dropout = 1.0
+  hparams.nonsequential_targets = True
+  return hparams
+
+
+@registry.register_hparams("tfti_transformer_debug")
+def tfti_transformer_debug():
+  hparams = transformer.transformer_base_single_gpu()
+  # General hparams.
+  hparams.batch_size = 2
+  # Transformer hparams.
+  hparams.num_encoder_layers = 2
+  hparams.num_decoder_layers = 2
+  # TFTI hparams.
+  hparams.chunk_size = 4
+  hparams.latent_dropout = 1.0
+  hparams.nonsequential_targets = True
+  return hparams
