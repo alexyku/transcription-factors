@@ -37,6 +37,7 @@ from tensor2tensor.data_generators import text_encoder
 from tensor2tensor.layers import common_layers
 from tensor2tensor.layers import modalities
 from tensor2tensor.models import transformer
+from tensor2tensor.utils import metrics
 from tensor2tensor.utils import registry
 
 import tensorflow as tf
@@ -54,6 +55,36 @@ class SetSymbolModality(modalities.SymbolModality):
   In this case, each (label, prediction task) pair should receive its own
   embedding vector. Similarily, each logit gets its own projection variable.
   """
+
+  def loss(self, logits, targets):
+    # TODO(weston100): figure out a better way to do this.
+    with tf.variable_scope('auc', reuse=True):
+      lt = tf.nn.softmax(logits)
+      lt = tf.squeeze(lt)
+      lt = tf.transpose(lt, [1, 0, 2])
+      tt = tf.squeeze(targets)
+      tt = tf.transpose(tt, [1, 0])
+      tt = tf.cast(tt, dtype=tf.float32)
+      f = lambda x: tf.metrics.auc(labels=x[1], predictions=x[0], weights=None)
+      _, auc = tf.map_fn(f, (lt[:,:,2], tt-1)) 
+
+      mean_auc = tf.reduce_mean(auc)
+      tf.summary.scalar('auc', mean_auc)
+    
+    # TODO(alexyku): Where should this variable go so we can change it from command line?
+    pos_weight = 25
+
+    def weight_fn(labels):
+      weights = common_layers.weights_nonzero(labels)
+      weights += (tf.constant(pos_weight - 1, dtype=tf.float32) 
+                  * tf.to_float(tf.equal(labels, 2)))
+      return weights
+
+    return common_layers.padded_cross_entropy(
+        logits,
+        targets,
+        self._model_hparams.label_smoothing,
+        weights_fn=weight_fn)
 
   @property
   def name(self):
@@ -156,8 +187,15 @@ class DeepseaProblem(problem.Problem):
   def input_sequence_depth(self):
     return 4  # ACTG channels (in that order).
 
+
+  def eval_metrics(self):
+    # Note: this requires a modified metrics.py file in T2T.
+    return [metrics.Metrics.AUC]
+
+
   def dataset_filename(self):
     return "genomics_binding_deepsea"
+  
   
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string."""

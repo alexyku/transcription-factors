@@ -29,6 +29,8 @@ Above is the model architecture diagram of the Transformer.
 ```
 pip install tensor2tensor
 
+cp metrics.py.bak <your tensor2tensor location>/utils/metrics.py
+
 # See what problems, models, and hyperparameter sets are available.
 # You can easily swap between them (and add new ones).
 t2t-trainer --registry_help
