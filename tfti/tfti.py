@@ -284,22 +284,26 @@ class DeepseaProblem(problem.Problem):
     return example
 
 
-@registry.register_problem("genomics_binding_deepsea_a549")
-class A549DeepseaProblem(DeepseaProblem):
+@registry.register_problem("genomics_binding_deepsea_helas3")
+class HelaS3DeepseaProblem(DeepseaProblem):
   """Cell type specific label space."""
 
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
-    # Indices for TF labels specific to A549 cell type.
+    # Indices for TF labels specific to HeLa-S3 cell type.
     # Indices come from the file at 
     # media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/nmeth.3547-S3.xlsx
-    # and include all TF rows (between 128 TO 817) that list A549 as the cell type.
+    # and include all TF rows (between 128 TO 817) that list HeLa-S3 as the cell type.
     # Specifically, the index is the row number in the spreadsheet - 3.
-    A549_indices = np.array(list(range(170, 197)) + list(range(401, 406)) + [720, 721, 763])
+    helas3_indices = np.array([137, 138, 139] + 
+                              [294, 295, 296, 297] + 
+                              list(range(497, 549+1)) +  
+                              [739, 740, 741, 794])
+    helas3_indices -= 3
 
     # Keep only targets and latents corresponding to A549.
-    targets = tf.gather(example["targets"], A549_indices)
-    latents = tf.gather(example["latents"], A549_indices)
+    targets = tf.gather(example["targets"], helas3_indices)
+    latents = tf.gather(example["latents"], helas3_indices)
 
     example["targets"] = targets
     example["latents"] = latents
