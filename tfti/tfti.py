@@ -283,6 +283,28 @@ class DeepseaProblem(problem.Problem):
     return example
 
 
+@registry.register_problem("genomics_binding_deepsea_helas3")
+class HelaS3DeepseaProblem(DeepseaProblem):
+  """Cell type specific label space."""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    # Indices for TF labels specific to HeLa-S3 cell type.
+    # Indices come from the file at 
+    # media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/nmeth.3547-S3.xlsx
+    # and include all TF rows (between 128 TO 817) that list HeLa-S3 as the cell type.
+    # Specifically, the index is the row number in the spreadsheet - 3.
+    helas3_indices = np.array([137, 138, 139] + 
+                              [294, 295, 296, 297] + 
+                              list(range(497, 549+1)) +  
+                              [739, 740, 741, 794])
+    helas3_indices -= 3
+
+    # Keep only targets and latents corresponding to A549.
+    targets = tf.gather(example["targets"], helas3_indices)
+    latents = tf.gather(example["latents"], helas3_indices)
+
+    
 @registry.register_problem("genomics_binding_deepsea_tf")
 class TranscriptionFactorDeepseaProblem(DeepseaProblem):
   """Only transcription factors included in the label space."""
@@ -299,17 +321,7 @@ class TranscriptionFactorDeepseaProblem(DeepseaProblem):
     example["latents"] = example["latents"][start:end + 1]
     return example
 
-
-@registry.register_problem("genomics_binding_deepsea_a549")
-class A549DeepseaProblem(DeepseaProblem):
-  """Only labels for A549 included in the label space."""
-
-  def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
-    # TODO (Gunjan): Slice out indices for A549 labels.
-    return example
-
-
+  
 @registry.register_problem("genomics_binding_deepsea_chromatin")
 class ChromatinDeepseaProblem(DeepseaProblem):
   """DNase and histone labels are always observed."""
@@ -386,7 +398,7 @@ class TftiTransformer(transformer.Transformer):
       return decoder_output, {"attention_loss": attention_loss}
 
     return decoder_output
-
+  
 
 @registry.register_hparams("tfti_transformer_base")
 def tfti_transformer_base():
@@ -416,4 +428,3 @@ def tfti_transformer_debug():
   hparams.latent_dropout = 1.0
   hparams.nonsequential_targets = True
   return hparams
-  
