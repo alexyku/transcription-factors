@@ -339,8 +339,9 @@ class HelaS3DeepseaProblem(DeepseaProblem):
     helas3_indices -= 3
 
     # Keep only targets and latents corresponding to A549.
-    targets = tf.gather(example["targets"], helas3_indices)
-    latents = tf.gather(example["latents"], helas3_indices)
+    example["targets"] = tf.gather(example["targets"], helas3_indices)
+    example["latents"] = tf.gather(example["latents"], helas3_indices)
+    return example
 
     
 @registry.register_problem("genomics_binding_deepsea_tf")
