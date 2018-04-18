@@ -1,4 +1,5 @@
 # coding=utf-8
+
 # Copyright 2018 The Tensor2Tensor Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -83,6 +84,10 @@ class DeepseaProblem(problem.Problem):
 
   def dataset_filename(self):
     return "genomics_binding_deepsea"
+
+  def eval_metrics(self):
+    # Note: this requires a modified metrics.py file in T2T.
+    return [metrics.Metrics.AUCB]
   
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string."""
@@ -198,7 +203,7 @@ class TransformerCNN(transformer.Transformer):
     labels = tf.squeeze(features["targets"], axis=[2, 3])
     loss_num = tf.losses.sigmoid_cross_entropy(
         labels, logits, label_smoothing=hparams.label_smoothing)
-    return (loss_num, 1.0)  # loss_num, loss_denom
+    return (loss_num, tf.constant(1.0))  # loss_num, loss_denom
   
   def body(self, features):
     hparams = self._hparams

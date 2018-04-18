@@ -58,6 +58,7 @@ class Metrics(object):
   IMAGE_SUMMARY = "image_summary"
   ########### INSERT
   AUC = "average_positionwise_auc"
+  AUCB = "average_positionwise_auc_binary"
 
 
 ######### INSERT
@@ -82,6 +83,32 @@ def average_positionwise_auc(logits, targets,
   # TODO(Weston): Filter out irrelevant scores
   f = lambda x: tf.metrics.auc(labels=x[1], predictions=x[0], weights=None, updates_collections=tf.GraphKeys.METRIC_VARIABLES)
   _, auc = tf.map_fn(f, (lt[:,:,2], tt-1))
+
+  mean_auc = tf.reduce_mean(auc)
+  return mean_auc, tf.constant(1.0)
+
+
+def average_positionwise_auc_binary(logits, targets,
+                  weights_fn=common_layers.weights_nonzero):
+  """Pointwise area under reciever operating curve of predictions.
+  Args:
+    predictions : A Tensor of scores of shape [batch, nlabels].
+    labels: A Tensor of int32s giving true set elements,
+      of shape [batch, seq_length].
+    weights_fn: A function to weight the elements.
+  Returns:
+    mean_auc: The mean 
+    weights: A Tensor of shape [batch, nlabels].
+  """
+  lt = tf.nn.softmax(logits)
+  lt = tf.squeeze(lt)
+  lt = tf.transpose(lt)
+  tt = tf.squeeze(targets)
+  tt = tf.transpose(tt)
+  tt = tf.cast(tt, dtype=tf.float32)
+  # TODO(Weston): Filter out irrelevant scores
+  f = lambda x: tf.metrics.auc(labels=x[1], predictions=x[0], weights=None, updates_collections=tf.GraphKeys.METRIC_VARIABLES)
+  _, auc = tf.map_fn(f, (lt, tt))
 
   mean_auc = tf.reduce_mean(auc)
   return mean_auc, tf.constant(1.0)
@@ -560,4 +587,5 @@ METRICS_FNS = {
     Metrics.IMAGE_SUMMARY: image_summary,
     ######## INSERT
     Metrics.AUC: average_positionwise_auc,
+    Metrics.AUCB: average_positionwise_auc_binary,
 }
