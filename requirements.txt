@@ -1,0 +1,14 @@
+# for running notebooks
+seaborn
+pandas
+xlrd==1.1.0
+
+# for data generation and training
+h5py
+numpy
+scipy
+# comment below line if running on GPU
+tensorflow==1.7.0			
+# uncomment below line if running on GPU
+# tensorflow_gpu==1.7.0		
+tensor2tensor==1.5.7
