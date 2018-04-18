@@ -201,8 +201,12 @@ class TransformerCNN(transformer.Transformer):
     # logits ==> loss
     hparams = self._hparams
     labels = tf.squeeze(features["targets"], axis=[2, 3])
-    loss_num = tf.losses.sigmoid_cross_entropy(
-        labels, logits, label_smoothing=hparams.label_smoothing)
+    #loss_num = tf.losses.sigmoid_cross_entropy(
+    #    labels, logits, label_smoothing=hparams.label_smoothing)
+    if not self._hparams.get("pos_weight"):
+        self._hparams.pos_weight = 50
+    loss_num = tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(
+        tf.cast(labels, dtype=tf.float32), logits, self._hparams.pos_weight))
     return (loss_num, tf.constant(1.0))  # loss_num, loss_denom
   
   def body(self, features):
