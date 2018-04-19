@@ -29,8 +29,6 @@ Above is the model architecture diagram of the Transformer.
 ```
 pip install tensor2tensor
 
-cp metrics.py.bak <your virtual env>/lib/python3.6/site-packages/tensor2tensor/utils/metrics.py
-
 # See what problems, models, and hyperparameter sets are available.
 # You can easily swap between them (and add new ones).
 t2t-trainer --registry_help
@@ -69,17 +67,16 @@ t2t-trainer \
 For debugging on dummy data:
 
 ```
-PROBLEM=genomics_binding_deepsea_tf
+PROBLEM=genomics_binding_deepsea_helas3
 MODEL=tfti_transformer
 HPARAMS_SET=tfti_transformer_debug
 HPARAMS=''
 
 USR_DIR=./tfti
 DATA_DIR=./tfti/dev
-TMP_DIR=/tmp/t2t_datagen
-TRAIN_DIR=$HOME/t2t_train/$PROBLEM/$MODEL-$HPARAMS
+TRAIN_DIR=$HOME/t2t_train/$PROBLEM/$MODEL-$HPARAMS_SET-$HPARAMS
 
-mkdir -p $DATA_DIR $TMP_DIR $TRAIN_DIR
+mkdir -p $DATA_DIR $TRAIN_DIR
 
 # Train
 t2t-trainer \

@@ -38,174 +38,334 @@ from tensor2tensor.layers import common_layers
 from tensor2tensor.layers import modalities
 from tensor2tensor.models import transformer
 from tensor2tensor.utils import metrics
+from tensor2tensor.utils import modality
 from tensor2tensor.utils import registry
 
 import tensorflow as tf
 
 
-@registry.register_symbol_modality("nonsequential")
-class SetSymbolModality(modalities.SymbolModality):
-  """Symbol modality for nonsequential sequences (i.e., sets).
+################################################################################
+################################## UTILITIES ###################################
+################################################################################
 
-  Use this modality where there is no temporal component to the sequence, but
-  each position in the sequence has the same vocab size. For example, suppose we
-  have a binary label set, a label of 1 for prediction task i might mean
-  something different from a 1 for prediction task j.
 
-  In this case, each (label, prediction task) pair should receive its own
-  embedding vector. Similarily, each logit gets its own projection variable.
+def keep_first_dims(x, n):
+  """Reshapes to the first n dims, assumes the rest are 1.
+
+  Args:
+    x: A Tensor with shape [d_1, ..., d_n, 1, ..., 1].
+    n: Number of non-trivial trailing dimensions.
+
+  Returns:
+    A Tensor with shape [d_1, ..., d_n].
   """
+  return tf.reshape(x, common_layers.shape_list(x)[:n])
 
-  def loss(self, logits, targets):
-    # TODO(weston100): figure out a better way to do this.
-    with tf.variable_scope('auc', reuse=True):
-      lt = tf.nn.softmax(logits)
-      lt = tf.squeeze(lt)
-      lt = tf.transpose(lt, [1, 0, 2])
-      tt = tf.squeeze(targets)
-      tt = tf.transpose(tt, [1, 0])
-      tt = tf.cast(tt, dtype=tf.float32)
-      f = lambda x: tf.metrics.auc(labels=x[1], predictions=x[0], weights=None)
-      _, auc = tf.map_fn(f, (lt[:,:,2], tt-1)) 
 
-      mean_auc = tf.reduce_mean(auc)
-      tf.summary.scalar('auc', mean_auc)
-    
-    # TODO(alexyku): Where should this variable go so we can change it from command line?
-    pos_weight = 25
+################################################################################
+################################### METRICS ####################################
+################################################################################
 
-    def weight_fn(labels):
-      weights = common_layers.weights_nonzero(labels)
-      weights += (tf.constant(pos_weight - 1, dtype=tf.float32) 
-                  * tf.to_float(tf.equal(labels, 2)))
-      return weights
 
-    return common_layers.padded_cross_entropy(
-        logits,
-        targets,
-        self._model_hparams.label_smoothing,
-        weights_fn=weight_fn)
+def set_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
+  """Computes the approximate AUC via a Riemann sum.
+  
+  Args:
+    predictions : A Tensor of scores of shape [batch, nlabels, 1, 1].
+    labels: A Tensor of int32s giving true set elements,
+      of shape [batch, nlabels, 1, 1].
+    curve: Specifies the name of the curve to be computed, 'ROC' [default] or
+      'PR' for the Precision-Recall-curve.
+    weights_fn: A function to weight the elements.
+  Returns:
+    aucs: A Tensor of shape [nlabels].
+    weights: A Tensor of shape [nlabels].
+  """
+  logits = keep_first_dims(logits, 2)
+  targets = keep_first_dims(targets, 2)
+
+  def single_auc(elems):
+    """Computes the AUC for a single label.
+
+    Args:
+      elems: A tuple containing:
+        labels: A Tensor with shape [batch].
+        predictions: A Tensor with shape [batch].
+
+    Returns:
+      A tuple containing:
+        auc_op: A Tensor with shape [1].
+        weight: A Tensor with shape [1].
+    """
+    auc, auc_op = tf.metrics.auc(
+      labels=elems[0], predictions=elems[1], weights=None, curve=curve,
+      updates_collections=tf.GraphKeys.METRIC_VARIABLES)
+    return auc_op, tf.constant(1.0)
+  
+  predictions = tf.nn.sigmoid(logits)
+  targets = tf.to_float(tf.transpose(targets, [1, 0]))  # [nlabels, batch]
+  predictions = tf.transpose(predictions, [1, 0])
+  aucs, weights = tf.map_fn(single_auc, elems=(targets, predictions))
+  return aucs, weights
+
+
+def average_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
+  """Weighted average of AUC measurements."""
+  aucs, weights = set_auc(logits, targets, curve, weights_fn)
+  weighted_average_auc = tf.reduce_mean(tf.multiply(aucs, weights))
+  return weighted_average_auc, tf.constant(1.0)
+
+
+def set_auroc(logits, targets, weights_fn=common_layers.weights_all):
+  """Area under receiver operator curve."""
+  return set_auc(logits, targets, "ROC", weights_fn)
+
+
+def set_auprc(logits, targets, weights_fn=common_layers.weights_all):
+  """Area under precision recall curve."""
+  return set_auc(logits, targets, "PR", weights_fn)
+
+
+def average_auroc(logits, targets, weights_fn=common_layers.weights_all):
+  """Average area under receiver operator curve."""
+  return average_auc(logits, targets, "ROC", weights_fn)
+
+
+def average_auprc(logits, targets, weights_fn=common_layers.weights_all):
+  """Average area under precision recall curve."""
+  return average_auc(logits, targets, "PR", weights_fn)
+
+
+# Modify metrics.
+metrics.Metrics.SET_AUROC = "set_auroc"
+metrics.Metrics.SET_AUPRC = "set_auprc"
+metrics.Metrics.AVERAGE_AUROC = "average_auroc"
+metrics.Metrics.AVERAGE_AUPRC = "average_auprc"
+metrics.METRICS_FNS[metrics.Metrics.SET_AUROC] = set_auroc
+metrics.METRICS_FNS[metrics.Metrics.SET_AUPRC] = set_auprc
+metrics.METRICS_FNS[metrics.Metrics.AVERAGE_AUROC] = average_auroc
+metrics.METRICS_FNS[metrics.Metrics.AVERAGE_AUPRC] = average_auprc
+
+
+################################################################################
+################################ MODALITIES ####################################
+################################################################################
+
+
+def set_embedding(x, vocab_size, dense_size, **kwargs):
+  """Each (ID, position) tuple gets a unique embedding.
+
+  Args:
+    x: An int Tensor with shape [batch_size, length] whose elements are in
+      [0, vocab_size).
+    vocab_size: Int. The range of valid ID values elements in x can take.
+    dense_size: Int. The dimensionality of an embedding vector.
+
+  Returns:
+    A float Tensor with shape [batch_size, length, dense_size].
+  """
+  x = keep_first_dims(x, 2)
+  seq_length = common_layers.shape_list(x)[1]
+  x += tf.range(seq_length, dtype=x.dtype) * vocab_size
+  new_vocab_size = vocab_size * seq_length
+  return common_layers.embedding(x, new_vocab_size, dense_size, **kwargs)
+
+
+@registry.register_class_label_modality("binary")
+class BinaryClassLabelModality(modality.Modality):
+  """Class label modality for predicting multiple binary labels.
+
+  Assumes logits and targets are Tensors with shape [batch_size, nlabels].
+  Assumes that 0 and 1 are the negative and positive IDs, respectively.
+  """
+  NEG, NEG_ID = ("<neg>", 0)
+  POS, POS_ID = ("<pos>", 1)
+
+  def __init__(self, model_hparams, vocab_size=None):
+    self._model_hparams = model_hparams
+    self._vocab_size = 2  # Binary predictions in (0, 1).
 
   @property
   def name(self):
-    return "nonsequential_symbol_modality_%d_%d" % (self._vocab_size,
-                                                    self._body_input_depth)
+    return "binary_class_label_modality_%d" % self._body_input_depth
 
-  def embedding(self, x, vocab_size, dense_size, **kwargs):
-    """Each (position, ID) pair gets its own embedding."""
-    shape_list = common_layers.shape_list(x)
-    # If we had an extra channel dimensions, assume they are 1.
-    if len(shape_list) > 2:
-      x = tf.reshape(x, shape_list[:2])
-    seq_length = common_layers.shape_list(x)[1]
-    x += tf.range(seq_length, dtype=x.dtype) * vocab_size
-    return common_layers.embedding(
-        x, vocab_size * seq_length, dense_size, **kwargs)
-
-  def bottom_simple(self, x, name, reuse):
-    with tf.variable_scope(name, reuse=reuse):
-      # Squeeze out the channels dimension.
-      x = tf.squeeze(x, axis=3)
-      x = common_layers.dropout_no_scaling(
-          x, 1.0 - self._model_hparams.symbol_dropout)
-      ret = self.embedding(x, self._vocab_size, self._body_input_depth)
-      ret = tf.expand_dims(ret, 2)
-      if self._model_hparams.multiply_embedding_mode == "sqrt_depth":
-        ret *= self._body_input_depth**0.5
-      # No embedding for padding IDs (set to zero).
-      ret *= tf.expand_dims(tf.to_float(tf.not_equal(x, 0)), -1)
-      return ret
-
-  def top(self, body_output, _):
-    """Generate logits.
+  def bottom(self, x):
+    """Class label space to embeddings.
 
     Args:
-      body_output: A Tensor with shape [batch, p0, p1, body_input_depth]
+      x: An int Tensor with shape [batch_size, nlabels, 1, 1] whose elements
+        are in [0, self._vocab_size).
 
     Returns:
-      logits: A Tensor with shape  [batch, p0, p1, ?, vocab_size].
+      A float Tensor with shape [batch_size, nlabels, 1, hidden_size].
     """
-    if self._model_hparams.symbol_modality_skip_top:
-      return tf.expand_dims(body_output, 3)
+    with tf.variable_scope(self.name):
+      res = set_embedding(x, self._vocab_size, self._body_input_depth)
+      return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
-    if self._model_hparams.shared_embedding_and_softmax_weights:
-      scope_name = "shared"
-      reuse = True
-    else:
-      scope_name = "softmax"
-      reuse = False
+  def top(self, body_output, _):
+    """Body output to logits.
 
-    with tf.variable_scope(scope_name, reuse=reuse):
-      body_output_shape = common_layers.shape_list(body_output)
-      body_output = common_layers.flatten4d3d(body_output)
-      # Transpose to swap the batch and length dimensions to use tf.map_fn.
-      body_output = tf.transpose(body_output, [1, 0, 2])
-      def to_logits(x):
-        # New logit var for each binding prediction.
-        var = self._get_weights(body_output_shape[-1])
-        return tf.matmul(x, var, transpose_b=True)
-      logits = tf.map_fn(to_logits, body_output)
-      # Transpose again to revert the aforementioned swap.
-      logits = tf.transpose(logits, [1, 0, 2])
-      return tf.reshape(logits, body_output_shape[:-1] + [1, self._vocab_size])
+    Args:
+      body_output: A float Tensor with shape
+        [batch_size, nlabels, 1, hidden_size].
+
+    Returns:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+
+    """
+    with tf.variable_scope(self.name):
+      x = body_output  # [batch_size, nlabels, 1, hidden_size]
+      x = common_layers.flatten4d3d(x)
+      # Transpose to apply `tf.map_fn` along the  `nlabels` dimension.
+      # i.e., mapping along dimension 0 of [nlabels, batch_size, hidden_size].
+      x = tf.transpose(x, [1, 0, 2])
+      # Collapse `hidden_size` dimension of `x` with a dense layer
+      # to get a Tensor with shape [nlabels, batch_size, 1]
+      res = tf.map_fn(lambda y: tf.layers.dense(y, 1), x)
+      # Reverse the transposition to get [batch_size, nlabels, 1].
+      res =  tf.transpose(res, [1, 0, 2])
+      return tf.expand_dims(res, 3)  # [batch_size, nlabels, 1, 1]
+
+  @property
+  def targets_weights_fn(self):
+    """Returns a function to weight the loss."""
+    hp = self._model_hparams
+    if hp and not hp.get("pos_weight"):
+      return common_layers.weights_all
+    def pos_weights_fn(targets):
+      is_neg = tf.to_float(tf.equal(targets, 0))
+      is_pos = tf.to_float(tf.equal(targets, 1))
+      return hp.pos_weight * is_pos + is_neg
+    return pos_weights_fn
+
+  def tensorboard_summaries(self, logits, targets):
+    """A method that is called in `self.loss(...)` that logs to TensorBoard.
+
+    Args:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
+        values in (0, 1).
+
+    Returns:
+      None.
+    """
+    weighted_average_auroc = tf.multiply(*average_auroc(logits, targets))
+    weighted_average_auprc = tf.multiply(*average_auprc(logits, targets))
+    tf.summary.scalar("metrics/average_auprc", weighted_average_auroc)
+    tf.summary.scalar("metrics/average_auprc", weighted_average_auprc)
+
+    # Logging AUC metrics for individual labels.
+    # TODO(alexyku): can we display multple curves on the same plot?
+    # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
+    # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
+
+  def loss(self, logits, targets):
+    """Logits to loss.
+
+    Args:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
+        values in (0, 1).
+
+    Returns:
+      A tuple containing:
+      loss_numerator: A Tensor with shape [1].
+      loss_denominator: A Tensor with shape [1].
+    """
+    # TensorBoard summaries.
+    self.tensorboard_summaries(logits, targets)
+    logits = keep_first_dims(logits, 2)
+    targets = keep_first_dims(targets, 2)
+    loss = tf.losses.sigmoid_cross_entropy(
+        multi_class_labels=targets,
+        logits=logits,
+        reduction="none")
+    weights = self.targets_weights_fn(targets)
+    return tf.reduce_sum(loss * weights), tf.reduce_sum(weights)
 
 
-@registry.register_problem("genomics_binding_deepsea")
+@registry.register_class_label_modality("binary_imputation")
+class BinaryImputationClassLabelModality(BinaryClassLabelModality):
+  """Class label modality for imputing multiple binary labels.
+
+  Assumes that 2 is the unknown ID that will be imputed by the model.
+  """
+  UNK, UNK_ID = ("<unk>", 2)
+
+  def __init__(self, model_hparams, vocab_size=None):
+    self._model_hparams = model_hparams
+    self._vocab_size = 3  # Binary predictions with unkowns in (0, 1, ?).
+
+  @property
+  def name(self):
+    return "binary_imputation_class_label_modality_%d" % self._body_input_depth
+
+  def tensorboard_summaries(self, logits, targets):
+    # TODO(alexyku): compute AUC w.r.t. masked targets.
+    super().tensorboard_summaries(logits, targets)
+
+
+################################################################################
+################################## PROBLEMS ####################################
+################################################################################
+
+
+# Not registered. See subclass `TftiDeepseaProblem`.
 class DeepseaProblem(problem.Problem):
   """N-gram/k-mer embedded deepsea data."""
     
   @property
-  def default_chunk_size(self):
-    # This is only used if "chunk_size" is
-    # not specified in the model hparams.
-    return 4  # n-gram/k-mer size.
-
-  @property
-  def default_latent_dropout(self):
-    # Can be overwritten in model hparams.
-    # Default is pure inference setting.
-    return 1.0
-
-  @property
-  def default_nonsequential_targets(self):
-    # Can be overwritten in model hparams.
-    return True
+  def chunk_size(self):
+    """n-gram/k-mer size."""
+    return 4
   
   @property
-  def num_output_predictions(self):
-    return 919  # DNase, TFs and histones.
-  
-  @property
-  def num_output_classes(self):
-    return 2  # Binary classification.
+  def num_binary_predictions(self):
+    """Binary predictions: DNase, TFs and histones."""
+    return 919
   
   @property
   def input_sequence_length(self):
     return 1000 # Number of residues.
-  
-  @property
-  def input_sequence_depth(self):
-    return 4  # ACTG channels (in that order).
-
 
   def eval_metrics(self):
-    # Note: this requires a modified metrics.py file in T2T.
-    return [metrics.Metrics.AUC]
-
+    """Metrics to run in the eval loop."""
+    return [metrics.Metrics.AVERAGE_AUROC,
+            metrics.Metrics.AVERAGE_AUPRC]
 
   def dataset_filename(self):
+    """Data set filename (shared among subclasses)."""
     return "genomics_binding_deepsea"
   
-  
   def stringify(self, one_hot_seq):
-    """One-hot sequence to an ACTG string."""
+    """One-hot sequence to an ACTG string.
+
+    one_hot_seq: An array with shape [length, 4] representing a one-hot-encoded
+      DNA sequence. A column with all zeros is denoted by "N".
+
+    Returns:
+      A string decoding one_hot_seq.
+    """
     ids = one_hot_seq.dot(np.arange(1, 5))
     # An all-zero column is denoted by "N".
     bases = np.array(list("NACTG"))
     return "".join(bases[ids])
     
   def generator(self, tmp_dir, is_training):
-    """Generates example dicts."""
+    """Generates example dicts.
+
+    Args:
+      tmp_dir: String. Path to working directory where your unprocessed data is.
+      is_training: Boolean. Whether to generate data from the training or
+        validation set.
+
+    Yields:
+      A feature dict containing:
+        "index": A singleton list with the iteration index.
+        "inputs": A list of ints representing ascii encoded DNA bases in NACTG.
+        "targets": A list of ints representing label classes in (0, 1).
+    """
     def train_generator():
       filename = os.path.join(tmp_dir, "deepsea_train/train.mat")
       tmp = h5py.File(filename)
@@ -227,12 +387,20 @@ class DeepseaProblem(problem.Problem):
       if i % 1000 == 0:
         tf.logging.info(f"Generated {i} examples.")
       assert len(inputs) == self.input_sequence_length
-      assert len(targets) == self.num_output_predictions
+      assert len(targets) == self.num_binary_predictions
       yield {"index": [i], "inputs": list(map(ord, inputs)),
              "targets": list(map(int, targets))}
   
   def maybe_download_and_unzip(self, tmp_dir):
-    """Downloads deepsea data if it doesn't already exist."""
+    """Downloads deepsea data if it doesn't already exist.
+
+    Args:
+      tmp_dir: String. The directory to maybe download to.
+
+    Returns:
+      String. The directory path where the unprocessed data was downloaded and
+        unzipped.
+    """
     url = ("http://deepsea.princeton.edu/media/code/"
            "deepsea_train_bundle.v0.9.tar.gz")
     filename = "deepsea_train_bundle.v0.9.tar.gz"
@@ -248,7 +416,15 @@ class DeepseaProblem(problem.Problem):
     return dirpath
   
   def generate_data(self, data_dir, tmp_dir, task_id=-1):
-    """Generates tf-refords for the problem."""
+    """Generates tf-refords for the problem.
+
+    Args:
+      data_dir: String. The directory to generate TF-Records to.
+      tmp_dir: String. The directory to download the unprocessed data to.
+
+    Returns:
+      None.
+    """
     self.maybe_download_and_unzip(tmp_dir)
     generator_utils.generate_dataset_and_shuffle(
       self.generator(tmp_dir, is_training=True),
@@ -257,213 +433,216 @@ class DeepseaProblem(problem.Problem):
       self.dev_filepaths(data_dir, 1, shuffled=True))
   
   def hparams(self, defaults, model_hparams):
-    """Augment the hparams for this problem."""
-    if not model_hparams.get("chunk_size"):
-      model_hparams.chunk_size = self.default_chunk_size
-    if not model_hparams.get("latent_dropout"):
-      model_hparams.latent_dropout = self.default_latent_dropout
-    if not model_hparams.get("nonsequential_targets"):
-      model_hparams.nonsequential_targets = self.default_nonsequential_targets
-    vocab_size = dna_encoder.DNAEncoder(model_hparams.chunk_size).vocab_size
+    """Augment the hparams for this problem.
+
+    Args:
+      defaults: The default hparams to augment for this problem.
+      model_hparams: The hparams of the model being used. Augment these as 
+        needed for this particular problem.
+
+    Returns:
+      None.
+    """
     p = defaults
-    # Symbol modality reserves 0 as "padding". Which is why the
-    # targets has an extra symbol. Latent targets have yet another
-    # symbol for "unknown" - so two extra symbols.
-    target_and_latent_modality = registry.Modalities.SYMBOL
-    if model_hparams.nonsequential_targets:
-      target_and_latent_modality += ":nonsequential"
-    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size),
-                        "latents": (target_and_latent_modality,
-                                    self.num_output_classes + 2)}
-    p.target_modality = (target_and_latent_modality,
-                         self.num_output_classes + 1)
+    vocab_size = dna_encoder.DNAEncoder(self.chunk_size).vocab_size
+    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)}
+    p.target_modality = ("%s:binary" % registry.Modalities.CLASS_LABEL, None)
     p.input_space_id = problem.SpaceID.DNA
     p.target_space_id = problem.SpaceID.GENERIC
   
   def example_reading_spec(self):
-    """Reader spec for tf-record examples."""
+    """Reader spec for tf-record examples.
+    
+    Specify the names and types of the features on disk. Specify
+      tf.contrib.slim.tfexample_decoder.
+    """
     data_fields = {
       "index": tf.FixedLenFeature([1], tf.int64),
       "inputs": tf.FixedLenFeature([self.input_sequence_length], tf.int64),
-      "targets": tf.FixedLenFeature([self.num_output_predictions], tf.int64),
+      "targets": tf.FixedLenFeature([self.num_binary_predictions], tf.int64),
     }
     data_items_to_decoders = None
     return (data_fields, data_items_to_decoders)
   
   def preprocess_example(self, example, mode, hparams):
-    """Preprocess the model inputs."""
+    """Preprocess the model inputs.
+    
+    Args:
+      example: Feature dict from feature name to Tensor or SparseTensor.
+      mode: String. Specifies training, eval, and inference.
+      hparams: The problem hparams.
+
+    Returns:
+      Feature dict from feature name to Tensor or SparseTensor.
+    """
     inputs = example["inputs"]
     targets = example["targets"]
-    encoder = dna_encoder.DNAEncoder(hparams.chunk_size)
+    encoder = dna_encoder.DNAEncoder(self.chunk_size)
     def to_ids(inputs):
       ids = encoder.encode("".join(map(chr, inputs)))
       return np.array(ids, dtype=np.int64)
     [inputs] = tf.py_func(to_ids, [inputs], [tf.int64], stateful=False)
     # Reshape to the [p0, p1, channels] modality convention.
-    out_size = int(np.ceil(self.input_sequence_length / hparams.chunk_size))
-    inputs = tf.reshape(inputs, [out_size, 1, 1])
-    targets = tf.reshape(targets, [self.num_output_predictions, 1, 1])
-    # Targets are natively binary (i.e., 0 or 1), we add one to each
-    # (i.e., 0->1 and 1->2) to preserve the meaning of 0, the "padding" ID.
-    targets += 1
-    # Latent dropout is the probability of dropping a ground-truth
-    # target when computing the latent.
-    dropout_prob = hparams.latent_dropout
-    boolean_mask = (tf.random_uniform(
-        common_layers.shape_list(targets)) < dropout_prob)
-    mask = tf.to_float(boolean_mask)
-    # Replace some labels with 3, the unknown ID.
-    latents = tf.to_int32(tf.to_float(targets) * (1 - mask) + 3 * mask)
+    out_size = int(np.ceil(self.input_sequence_length / self.chunk_size))
+    example["inputs"] = tf.reshape(inputs, [out_size, 1, 1])
+    example["targets"] = tf.reshape(
+        targets, [self.num_binary_predictions, 1, 1])
+    return example
 
-    example["inputs"] = inputs
-    example["targets"] = targets
-    example["latents"] = latents
+
+@registry.register_problem("genomics_binding_deepsea")
+class TftiDeepseaProblem(DeepseaProblem):
+  """DeepSEA problem for imputation models, such as TFTI."""
+
+  def hparams(self, defaults, model_hparams):
+    """See base class."""
+    super().hparams(defaults, model_hparams)
+    defaults.input_modality["latents"] = (
+        "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
+
+  def make_latents(self, targets, hparams):
+    """Generates a partially observed latent target tensor to be imputed.
+
+    Args:
+      targets: An int Tensor with values in (0, 1).
+      hparams: The problem hparams.
+
+    Returns:
+      An int Tensor with values in (0, 1, 2), where 2 represents the unknown
+        ID to be imputed by the model. The unknown ID is specified by:
+          BinaryImputationClassLabelModality.UNK_ID
+    """
+    unk_id = BinaryImputationClassLabelModality.UNK_ID
+    if not hparams.get("latent_dropout"):
+      # Sets everything to the unknown ID by default.
+      latents = tf.ones(common_layers.shape_list(targets)) * unk_id
+    else:
+      # Latent dropout is the probability of keeping a ground-truth label.
+      keep_mask = tf.to_float(tf.random_uniform(
+        common_layers.shape_list(targets)) < hparams.latent_dropout)
+      latents = keep_mask * tf.to_float(targets) + (1.0 - keep_mask) * unk_id
+    return tf.to_int32(latents)
+
+  def preprocess_example(self, example, mode, hparams):
+    """See base class."""
+    example = super().preprocess_example(example, mode, hparams)
+    example["latents"] = self.make_latents(example["targets"], hparams)
+    return example
+
+
+@registry.register_problem("genomics_binding_deepsea_tf")
+class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
+  """DeepSEA Imputation problem for transcription factors (TFs)."""
+
+  def preprocess_example(self, example, mode, hparams):
+    """Slices latents and targets to only include indices of TF labels.
+
+    Indices come from:
+    (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
+        nmeth.3547-S3.xlsx)
+
+    They include all TF rows (between 128 to 817). Specifically, the index is
+    the row number in the spreadsheet - 3.
+
+    See base class for method signature.
+    """
+    example = super().preprocess_example(example, mode, hparams)
+    example["targets"] = example["targets"][125:815]
+    example["latents"] = example["latents"][125:815]
     return example
 
 
 @registry.register_problem("genomics_binding_deepsea_helas3")
-class HelaS3DeepseaProblem(DeepseaProblem):
-  """Cell type specific label space."""
+class HelaS3DeepseaProblem(TftiDeepseaProblem):
+  """DeepSEA Imputation problem for the HeLa-S3 cell culture."""
 
   def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
-    # Indices for TF labels specific to HeLa-S3 cell type.
-    # Indices come from the file at 
-    # media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/nmeth.3547-S3.xlsx
-    # and include all TF rows (between 128 TO 817) that list HeLa-S3 as the cell type.
-    # Specifically, the index is the row number in the spreadsheet - 3.
-    helas3_indices = np.array([137, 138, 139] + 
-                              [294, 295, 296, 297] + 
-                              list(range(497, 549+1)) +  
-                              [739, 740, 741, 794])
-    helas3_indices -= 3
+    """Slices latents and targets to only include indices of HeLa-S3 labels.
 
-    # Keep only targets and latents corresponding to A549.
-    example["targets"] = tf.gather(example["targets"], helas3_indices)
-    example["latents"] = tf.gather(example["latents"], helas3_indices)
+    Indices come from:
+    (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
+        nmeth.3547-S3.xlsx)
+
+    See base class for method signature.
+    """
+    example = super().preprocess_example(example, mode, hparams)
+    gather_indices = np.array(
+        [134, 135, 136, 291, 292, 293, 294, 494, 495, 496, 497, 498, 499,
+         500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512,
+         513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523, 524, 525,
+         526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538,
+         539, 540, 541, 542, 543, 544, 545, 546, 736, 737, 738, 791])
+    example["targets"] = tf.gather(example["targets"], gather_indices)
+    example["latents"] = tf.gather(example["latents"], gather_indices)
     return example
 
-    
-@registry.register_problem("genomics_binding_deepsea_tf")
-class TranscriptionFactorDeepseaProblem(DeepseaProblem):
-  """Only transcription factors included in the label space."""
 
-  def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
-    # Indices for TF labels. Indices come from the file at
-    # (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
-    # nmeth.3547-S3.xlsx)
-    # and include all TF rows (between 128 to 817).
-    # Specifically, the index is the row number in the spreadsheet - 3.
-    start, end = (125, 814)
-    example["targets"] = example["targets"][start:end + 1]
-    example["latents"] = example["latents"][start:end + 1]
-    return example
-
-  
-@registry.register_problem("genomics_binding_deepsea_chromatin")
-class ChromatinDeepseaProblem(DeepseaProblem):
-  """DNase and histone labels are always observed."""
-
-  def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
-    # TODO (Alex): Slice out range [0, 125) and [815, 919).
-    return example
+################################################################################
+################################### MODELS #####################################
+################################################################################
 
 
 @registry.register_model("tfti_transformer")
 class TftiTransformer(transformer.Transformer):
   """A stack of transformer layers.
 
-  Transforms a set of (partially observed) latent labels into a complete label
-  set. These are the input and outputs of the model:
-  - Encoder inputs: Embedded DNA-sequence.
-  - Encoder output: None.
-  - Decoder inputs: Partially observed latent labels in [NEG, POS, UNK], where
-    the UNK labels are to be imputed by the decoder.
-  - Decoder output: Fully imputed labels in [NEG, POS].
-
-  We compute the loss with respect to the entire imputed label (so that the
-  model learns an identity mapping for the observed latents), but evaluate the
-  AUC and AUPRC on the imputed values.
-  
-  The imputation method is motivated by the idea that a model should consider
-  all the information it has to make a prediction. That is, both the
-  DNA-sequence, and the labels for the binding events you have.
+  Transforms a set of partially observed latent labels into a complete label
+  set. The encoder takes in as inputs embedded DNA sequence. The decoder takes
+  in as inputs a latent binary label set in (0, 1, ?) and outputs a complete
+  label set in (0, 1).
   """
   
   def body(self, features):
     """Transformer main model_fn.
+
     Args:
       features: Map of features to the model. Should contain the following:
-          "inputs": Transformer inputs [batch_size, input_length, hidden_dim]
-          "targets": Target decoder outputs.
-              [batch_size, decoder_length, hidden_dim]
-          "latents": Latent decoder inputs.
-              [batch_size, decoder_length, hidden_dim]
-          "target_space_id"
+        "inputs": Transformer inputs [batch_size, input_length, hidden_dim]
+        "targets": Target decoder outputs.
+            [batch_size, decoder_length, hidden_dim]
+        "target_space_id"
+
     Returns:
       Final decoder representation. [batch_size, decoder_length, hidden_dim]
     """
     hparams = self._hparams
-
-    inputs = features["inputs"]
-    target_space = features["target_space_id"]
     encoder_output, encoder_decoder_attention_bias = self.encode(
-        inputs, target_space, hparams, features=features)
-
-    # No longer call transformer.transformer_prepare_decoder because:
-    # - We are using full decoder self-attention (i.e., no attention bias).
-    # - We are not adding positional embeddings to the decoder inputs.
-    
-    latent = features["latents"]
-    decoder_input = common_layers.flatten4d3d(latent)
-    decoder_self_attention_bias = None
-
+        inputs=features["inputs"],
+        target_space=features["target_space_id"],
+        hparams=hparams,
+        features=features)
+    # No positional embeddings on decoder side.
     decoder_output = self.decode(
-        decoder_input,
-        encoder_output,
-        encoder_decoder_attention_bias,
-        decoder_self_attention_bias,
-        hparams,
-        nonpadding=transformer.features_to_nonpadding(features, "targets"))
-
-    expected_attentions = features.get("expected_attentions")
-    if expected_attentions is not None:
-      attention_loss = common_attention.encoder_decoder_attention_loss(
-          expected_attentions, self.attention_weights,
-          hparams.expected_attention_loss_type,
-          hparams.expected_attention_loss_multiplier)
-      return decoder_output, {"attention_loss": attention_loss}
-
+        decoder_input=common_layers.flatten4d3d(features["latents"]),
+        encoder_output=encoder_output,
+        encoder_decoder_attention_bias=encoder_decoder_attention_bias,
+        decoder_self_attention_bias=None,  # No masking.
+        hparams=hparams)
     return decoder_output
-  
+
+
+################################################################################
+################################## HPARAMS #####################################
+################################################################################
+
 
 @registry.register_hparams("tfti_transformer_base")
 def tfti_transformer_base():
+  """Hparams extends `transformer_base`."""
   hparams = transformer.transformer_base()
-  # General hparams.
-  hparams.batch_size = 128
-  # Transformer hparams.
-  hparams.num_encoder_layers = 6
-  hparams.num_decoder_layers = 4
-  # TFTI hparams.
-  hparams.chunk_size = 4
-  hparams.latent_dropout = 1.0
-  hparams.nonsequential_targets = True
+  hparams.batch_size = 64
+  hparams.pos_weight = 25
   return hparams
 
 
 @registry.register_hparams("tfti_transformer_debug")
 def tfti_transformer_debug():
-  hparams = transformer.transformer_base_single_gpu()
-  # General hparams.
+  """Hparams for debugging."""
+  hparams = transformer.transformer_base()
   hparams.batch_size = 2
-  # Transformer hparams.
-  hparams.num_encoder_layers = 2
-  hparams.num_decoder_layers = 2
-  # TFTI hparams.
-  hparams.chunk_size = 4
-  hparams.latent_dropout = 1.0
-  hparams.nonsequential_targets = True
+  hparams.num_hidden_layers = 2
+  hparams.hidden_size = 8
+  hparams.num_heads = 2
+  hparams.latent_dropout = 0.5
+  hparams.pos_weight = 10
   return hparams
