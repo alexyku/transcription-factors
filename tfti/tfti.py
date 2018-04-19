@@ -70,8 +70,8 @@ def set_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
       'PR' for the Precision-Recall-curve.
     weights_fn: A function to weight the elements.
   Returns:
-    aucs: A Tensor of shape [batch, nlabels].
-    weights: A Tensor of shape [batch, nlabels].
+    aucs: A Tensor of shape [nlabels].
+    weights: A Tensor of shape [nlabels].
   """
   logits = keep_first_dims(logits, 2)
   targets = keep_first_dims(targets, 2)
@@ -474,7 +474,7 @@ def tfti_transformer_base():
 
 @registry.register_hparams("tfti_transformer_debug")
 def tfti_transformer_debug():
-  hparams = transformer.transformer_base()r
+  hparams = transformer.transformer_base()
   hparams.batch_size = 2
   hparams.num_hidden_layers = 2
   hparams.hidden_size = 8
