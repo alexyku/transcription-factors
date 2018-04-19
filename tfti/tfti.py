@@ -384,7 +384,7 @@ class DeepseaProblem(problem.Problem):
              targets[i])
     generator = train_generator if is_training else valid_generator
     for i, (inputs, targets) in enumerate(generator()):
-      if i % 1000 == 0:
+      if (i % 1000 == 0):
         tf.logging.info(f"Generated {i} examples.")
       assert len(inputs) == self.input_sequence_length
       assert len(targets) == self.num_binary_predictions
@@ -529,6 +529,31 @@ class TftiDeepseaProblem(DeepseaProblem):
     example["latents"] = self.make_latents(example["targets"], hparams)
     return example
 
+
+
+@registry.register_problem("genomics_binding_deepsea_gm12878")
+class GM12878DeepseaProblem(TftiDeepseaProblem):
+  """GM12878 Cell type specific imputation problem"""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    # Indices for TF labels specific to GM12878 cell type.
+    # These are ordered so TFs are alphabetical
+    gm12878_indices = np.array([204, 205, 207, 410, 210, 412, 413, 127, 128, 212, 216, 420, 421, 423, 223, 428, 229, 230, 436, 235, 233, 437, 236, 237, 238, 240, 442, 241, 243, 444, 244, 447, 725, 224])
+    
+    # argsort indices
+    argsort_indices = np.argsort(gm12878_indices)
+    gather_indices_sorted = np.sort(gm12878_indices)
+
+    # Keep only targets and latents corresponding to GM12878 (LCL cell line)
+    targets = tf.gather(example["targets"], gather_indices_sorted)
+    latents = tf.gather(example["latents"], gather_indices_sorted)
+    
+    # Make sure tensors are sorted by alphabetical TFs
+    example["targets"] = tf.gather(targets, argsort_indices)
+    example["latents"] = tf.gather(latents, argsort_indices)
+    
+    return example
 
 @registry.register_problem("genomics_binding_deepsea_tf")
 class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
