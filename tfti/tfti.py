@@ -674,7 +674,7 @@ class TftiTransformer(transformer.Transformer):
     """
     hparams = self._hparams
 
-    (hparams.self_attention_type, hparams.ffn_layer) = ("dot_product", "conv_relu_conv")
+    hparams.ffn_layer = "conv_relu_conv"
 
     encoder_output, encoder_decoder_attention_bias = self.encode(
         inputs=features["inputs"],
@@ -683,7 +683,7 @@ class TftiTransformer(transformer.Transformer):
         features=features)
     # No positional embeddings on decoder side.
 
-    (hparams.self_attention_type, hparams.ffn_layer) = ("dot_product", "dense_relu_dense")
+    hparams.ffn_layer = "dense_relu_dense"
 
     decoder_output = self.decode(
         decoder_input=common_layers.flatten4d3d(features["latents"]),
