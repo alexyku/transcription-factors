@@ -296,6 +296,24 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
 
 
 ################################################################################
+################################## ENCODERS ####################################
+################################################################################
+
+
+class BinaryClassLabelEncoder(text_encoder.TextEncoder):
+    def __init__(self, neg_chr="0", pos_chr="1"):
+      self._num_reserved_ids = 0
+      self._chr_to_id = {neg_chr: 0, pos_chr: 1}
+      self._id_to_chr = {0: neg_chr, 1: pos_chr}
+    
+    def encode(self, label_str):
+      return [self._chr_to_id[x] for x in label_str]
+    
+    def decode(self, ids):
+      return "".join([self._id_to_chr[x] for x in ids])
+
+
+################################################################################
 ################################## PROBLEMS ####################################
 ################################################################################
 
@@ -326,6 +344,13 @@ class DeepseaProblem(problem.Problem):
   def dataset_filename(self):
     """Data set filename (shared among subclasses)."""
     return "genomics_binding_deepsea"
+
+  def feature_encoders(self, data_dir):
+    del data_dir
+    return {
+        "inputs": dna_encoder.DNAEncoder(self.chunk_size),
+        "targets": BinaryClassLabelEncoder(),
+    }
   
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string.
@@ -433,7 +458,7 @@ class DeepseaProblem(problem.Problem):
       None.
     """
     p = defaults
-    vocab_size = dna_encoder.DNAEncoder(self.chunk_size).vocab_size
+    vocab_size = self._encoders["inputs"].vocab_size
     p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)}
     p.target_modality = ("%s:binary" % registry.Modalities.CLASS_LABEL, None)
     p.input_space_id = problem.SpaceID.DNA
@@ -466,7 +491,7 @@ class DeepseaProblem(problem.Problem):
     """
     inputs = example["inputs"]
     targets = example["targets"]
-    encoder = dna_encoder.DNAEncoder(self.chunk_size)
+    encoder = self._encoders["inputs"]
     def to_ids(inputs):
       ids = encoder.encode("".join(map(chr, inputs)))
       return np.array(ids, dtype=np.int64)
