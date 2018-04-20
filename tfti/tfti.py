@@ -122,11 +122,6 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
 def average_auc(logits, features, labels, curve,  weights_fn=None):
   """Weighted average of AUC measurements."""
   aucs, weights = set_auc(logits, features, labels, curve, weights_fn)
-  
-  # Keep only the nonzero weights and their corresponding AUCs.
-  nonzero_weights = weights > 0
-  aucs = tf.gather(aucs, nonzero_weights)
-  weights = tf.gather(weights, nonzero_weights)
   weighted_average_auc = tf.reduce_mean(tf.multiply(aucs, weights))
   return weighted_average_auc, tf.constant(1.0)
 
