@@ -67,8 +67,7 @@ def keep_first_dims(x, n):
 ################################################################################
 
 
-def set_auc(logits, features, labels, curve,
-            weights_fn=common_layers.weights_all):
+def set_auc(logits, features, labels, curve, weights_fn=None):
   """Computes the approximate AUC via a Riemann sum.
   
   Args:
@@ -78,7 +77,7 @@ def set_auc(logits, features, labels, curve,
       of shape [batch, nlabels, 1, 1].
     curve: Specifies the name of the curve to be computed, 'ROC' [default] or
       'PR' for the Precision-Recall-curve.
-    weights_fn: A function to weight the elements.
+    weights_fn: A function to weight the elements (unused).
   Returns:
     aucs: A Tensor of shape [nlabels].
     weights: A Tensor of shape [nlabels].
@@ -86,10 +85,11 @@ def set_auc(logits, features, labels, curve,
   logits = keep_first_dims(logits, 2)
   labels = keep_first_dims(labels, 2)
 
+  # `metrics_weights` is an alternative to `weights_fn`.
   if "metrics_weights" in features:
     weights = keep_first_dims(features["metrics_weights"], 2)
   else:
-    weights = tf.ones(common_layers.shape_list(labels))
+    weights = tf.ones(common_layers.shape_list(labels))  # Uniform weights.
 
   def single_auc(elems):
     """Computes the AUC for a single label.
@@ -108,44 +108,40 @@ def set_auc(logits, features, labels, curve,
     auc, auc_op = tf.metrics.auc(
       labels=elems[0], predictions=elems[1], weights=elems[2], curve=curve,
       updates_collections=tf.GraphKeys.METRIC_VARIABLES)
-    return auc_op, tf.constant(1.0)
+    # Since elems is a 3-tuple, `tf.map_fn` requires we return a 3-tuple.
+    return auc_op, tf.constant(1.0), tf.constant(1.0)
   
   predictions = tf.nn.sigmoid(logits)
   labels = tf.to_float(tf.transpose(labels, [1, 0]))  # [nlabels, batch]
   predictions = tf.transpose(predictions, [1, 0])
   weights = tf.transpose(weights, [1, 0])
-  aucs, weights = tf.map_fn(single_auc, elems=(labels, predictions, weights))
+  aucs, weights, _ = tf.map_fn(single_auc, elems=(labels, predictions, weights))
   return aucs, weights
 
 
-def average_auc(logits, features, labels, curve,
-                weights_fn=common_layers.weights_all):
+def average_auc(logits, features, labels, curve,  weights_fn=None):
   """Weighted average of AUC measurements."""
   aucs, weights = set_auc(logits, features, labels, curve, weights_fn)
   weighted_average_auc = tf.reduce_mean(tf.multiply(aucs, weights))
   return weighted_average_auc, tf.constant(1.0)
 
 
-def set_auroc(logits, features, labels,
-              weights_fn=common_layers.weights_all):
+def set_auroc(logits, features, labels, weights_fn=None):
   """Area under receiver operator curve."""
   return set_auc(logits, features, labels, "ROC", weights_fn)
 
 
-def set_auprc(logits, features, labels,
-              weights_fn=common_layers.weights_all):
+def set_auprc(logits, features, labels, weights_fn=None):
   """Area under precision recall curve."""
   return set_auc(logits, features, labels, "PR", weights_fn)
 
 
-def average_auroc(logits, features, labels,
-                  weights_fn=common_layers.weights_all):
+def average_auroc(logits, features, labels, weights_fn=None):
   """Average area under receiver operator curve."""
   return average_auc(logits, features, labels, "ROC", weights_fn)
 
 
-def average_auprc(logits, features, labels,
-                  weights_fn=common_layers.weights_all):
+def average_auprc(logits, features, labels, weights_fn=None):
   """Average area under precision recall curve."""
   return average_auc(logits, features, labels, "PR", weights_fn)
 
@@ -240,39 +236,12 @@ class BinaryClassLabelModality(modality.Modality):
       res = tf.map_fn(lambda y: tf.layers.dense(y, 1), x)
       # Reverse the transposition to get [batch_size, nlabels, 1].
       res =  tf.transpose(res, [1, 0, 2])
-      res = tf.expand_dims(res, 3)  # [batch_size, nlabels, 1, 1]
-      # TensorBoard summaries.
-      self.tensorboard_summaries(res, features, features["targets"])
-      return res
-
-  def tensorboard_summaries(self, logits, features, labels):
-    """A method that is called in `self.top(...)` that logs to TensorBoard.
-
-    Args:
-      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
-      features: A features dict mapping keys to Tensors.
-      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
-        values in (0, 1).
-
-    Returns:
-      None.
-    """
-    weighted_average_auroc = tf.multiply(
-        *average_auroc(logits, features, labels, targets_weights_fn))
-    weighted_average_auprc = tf.multiply(
-        *average_auprc(logits, features, labels, targets_weights_fn))
-    tf.summary.scalar("metrics/average_auprc", weighted_average_auroc)
-    tf.summary.scalar("metrics/average_auprc", weighted_average_auprc)
-
-    # Logging AUC metrics for individual labels.
-    # TODO(alexyku): can we display multple curves on the same plot?
-    # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
-    # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
+      return tf.expand_dims(res, 3)  # [batch_size, nlabels, 1, 1]
 
   @property
   def targets_weights_fn(self):
     """Returns a function to weight the eval metrics."""
-    return common_layers.weights_all
+    return common_layers.weights_all  # Uniform weights.
 
   @property
   def loss_weights_fn(self):
@@ -281,6 +250,7 @@ class BinaryClassLabelModality(modality.Modality):
     if hp and not hp.get("pos_weight"):
       return common_layers.weights_all
     def pos_weights_fn(targets):
+      # Weigh positive examples to correct for class imbalance.
       is_neg = tf.to_float(tf.equal(targets, 0))
       is_pos = tf.to_float(tf.equal(targets, 1))
       return hp.pos_weight * is_pos + is_neg
@@ -296,8 +266,8 @@ class BinaryClassLabelModality(modality.Modality):
 
     Returns:
       A tuple containing:
-      loss_numerator: A Tensor with shape [1].
-      loss_denominator: A Tensor with shape [1].
+        loss_numerator: A Tensor with shape [1].
+        loss_denominator: A Tensor with shape [1].
     """
     logits = keep_first_dims(logits, 2)
     targets = keep_first_dims(targets, 2)
@@ -324,10 +294,6 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
   @property
   def name(self):
     return "binary_imputation_class_label_modality_%d" % self._body_input_depth
-
-  def tensorboard_summaries(self, logits, targets):
-    # TODO(alexyku): compute AUC w.r.t. masked targets.
-    super().tensorboard_summaries(logits, targets)
 
 
 ################################################################################
@@ -662,6 +628,37 @@ class TftiTransformer(transformer.Transformer):
   in as inputs a latent binary label set in (0, 1, ?) and outputs a complete
   label set in (0, 1).
   """
+
+  def tensorboard_summaries(self, logits, features, labels):
+    """A method that is called in `self.top(...)` that logs to TensorBoard.
+
+    This is called in `self.top(...)` because it is the only place where
+    both the logits and features (including labels) are available.
+
+    Args:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      features: A features dict mapping keys to Tensors.
+      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
+        values in (0, 1).
+
+    Returns:
+      None.
+    """
+    weighted_auroc = tf.multiply(*average_auroc(logits, features, labels))
+    weighted_auprc = tf.multiply(*average_auprc(logits, features, labels))
+    tf.summary.scalar("metrics/average_auprc", weighted_auroc)
+    tf.summary.scalar("metrics/average_auprc", weighted_auprc)
+
+    # Logging AUC metrics for individual labels.
+    # TODO(alexyku): can we display multple curves on the same plot?
+    # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
+    # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
+
+  def top(self, body_output, features):
+    logits = super().top(body_output, features)
+    # TensorBoard summaries.
+    self.tensorboard_summaries(logits, features, features["targets"])
+    return logits
   
   def body(self, features):
     """Transformer main model_fn.
