@@ -109,14 +109,15 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
       labels=elems[0], predictions=elems[1], weights=elems[2], curve=curve,
       updates_collections=tf.GraphKeys.METRIC_VARIABLES)
     # Since elems is a 3-tuple, `tf.map_fn` requires we return a 3-tuple.
-    return auc_op, elems[2], tf.constant(1.0)
+    weight =  tf.constant(1.0) * tf.cast(tf.reduce_any(tf.equal(elems[2], tf.constant(1.0))), dtype=tf.float32)
+    return auc_op, weight, tf.constant(1.0)
   
   predictions = tf.nn.sigmoid(logits)
   labels = tf.to_float(tf.transpose(labels, [1, 0]))  # [nlabels, batch]
   predictions = tf.transpose(predictions, [1, 0])
   weights = tf.transpose(weights, [1, 0])
-  aucs, weights, _ = tf.map_fn(single_auc, elems=(labels, predictions, weights))
-  return aucs, weights
+  aucs, weight, _ = tf.map_fn(single_auc, elems=(labels, predictions, weights))
+  return aucs, weight
 
 
 def average_auc(logits, features, labels, curve,  weights_fn=None):
