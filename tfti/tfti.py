@@ -213,13 +213,12 @@ class BinaryClassLabelModality(modality.Modality):
       res = set_embedding(x, self._vocab_size, self._body_input_depth)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
-  def top(self, body_output, features):
+  def top(self, body_output, _):
     """Body output to logits.
 
     Args:
       body_output: A float Tensor with shape
         [batch_size, nlabels, 1, hidden_size].
-      features: A features dict mapping keys to Tensors.
 
     Returns:
       logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
