@@ -521,7 +521,7 @@ class TftiDeepseaProblem(DeepseaProblem):
     example = super().preprocess_example(example, mode, hparams)
     example["latents"] = self.make_latents(example["targets"], hparams)
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
-    example["metrics_weights"] = tf.to_int32(tf.equal(example["latents"],
+    example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
                                                       self.unk_id))
     return example
 
