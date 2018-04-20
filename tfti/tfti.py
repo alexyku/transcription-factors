@@ -67,22 +67,29 @@ def keep_first_dims(x, n):
 ################################################################################
 
 
-def set_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
+def set_auc(logits, features, labels, curve, weights_fn=None):
   """Computes the approximate AUC via a Riemann sum.
   
   Args:
-    predictions : A Tensor of scores of shape [batch, nlabels, 1, 1].
+    logits : A Tensor of scores of shape [batch, nlabels, 1, 1].
+    features: A feature dict mapping keys to Tensors.
     labels: A Tensor of int32s giving true set elements,
       of shape [batch, nlabels, 1, 1].
     curve: Specifies the name of the curve to be computed, 'ROC' [default] or
       'PR' for the Precision-Recall-curve.
-    weights_fn: A function to weight the elements.
+    weights_fn: A function to weight the elements (unused).
   Returns:
     aucs: A Tensor of shape [nlabels].
     weights: A Tensor of shape [nlabels].
   """
   logits = keep_first_dims(logits, 2)
-  targets = keep_first_dims(targets, 2)
+  labels = keep_first_dims(labels, 2)
+
+  # `metrics_weights` is an alternative to `weights_fn`.
+  if "metrics_weights" in features:
+    weights = keep_first_dims(features["metrics_weights"], 2)
+  else:
+    weights = tf.ones(common_layers.shape_list(labels))  # Uniform weights.
 
   def single_auc(elems):
     """Computes the AUC for a single label.
@@ -91,6 +98,7 @@ def set_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
       elems: A tuple containing:
         labels: A Tensor with shape [batch].
         predictions: A Tensor with shape [batch].
+        weights: A Tensor with shape [batch].
 
     Returns:
       A tuple containing:
@@ -98,42 +106,44 @@ def set_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
         weight: A Tensor with shape [1].
     """
     auc, auc_op = tf.metrics.auc(
-      labels=elems[0], predictions=elems[1], weights=None, curve=curve,
+      labels=elems[0], predictions=elems[1], weights=elems[2], curve=curve,
       updates_collections=tf.GraphKeys.METRIC_VARIABLES)
-    return auc_op, tf.constant(1.0)
+    # Since elems is a 3-tuple, `tf.map_fn` requires we return a 3-tuple.
+    return auc_op, tf.constant(1.0), tf.constant(1.0)
   
   predictions = tf.nn.sigmoid(logits)
-  targets = tf.to_float(tf.transpose(targets, [1, 0]))  # [nlabels, batch]
+  labels = tf.to_float(tf.transpose(labels, [1, 0]))  # [nlabels, batch]
   predictions = tf.transpose(predictions, [1, 0])
-  aucs, weights = tf.map_fn(single_auc, elems=(targets, predictions))
+  weights = tf.transpose(weights, [1, 0])
+  aucs, weights, _ = tf.map_fn(single_auc, elems=(labels, predictions, weights))
   return aucs, weights
 
 
-def average_auc(logits, targets, curve, weights_fn=common_layers.weights_all):
+def average_auc(logits, features, labels, curve,  weights_fn=None):
   """Weighted average of AUC measurements."""
-  aucs, weights = set_auc(logits, targets, curve, weights_fn)
+  aucs, weights = set_auc(logits, features, labels, curve, weights_fn)
   weighted_average_auc = tf.reduce_mean(tf.multiply(aucs, weights))
   return weighted_average_auc, tf.constant(1.0)
 
 
-def set_auroc(logits, targets, weights_fn=common_layers.weights_all):
+def set_auroc(logits, features, labels, weights_fn=None):
   """Area under receiver operator curve."""
-  return set_auc(logits, targets, "ROC", weights_fn)
+  return set_auc(logits, features, labels, "ROC", weights_fn)
 
 
-def set_auprc(logits, targets, weights_fn=common_layers.weights_all):
+def set_auprc(logits, features, labels, weights_fn=None):
   """Area under precision recall curve."""
-  return set_auc(logits, targets, "PR", weights_fn)
+  return set_auc(logits, features, labels, "PR", weights_fn)
 
 
-def average_auroc(logits, targets, weights_fn=common_layers.weights_all):
+def average_auroc(logits, features, labels, weights_fn=None):
   """Average area under receiver operator curve."""
-  return average_auc(logits, targets, "ROC", weights_fn)
+  return average_auc(logits, features, labels, "ROC", weights_fn)
 
 
-def average_auprc(logits, targets, weights_fn=common_layers.weights_all):
+def average_auprc(logits, features, labels, weights_fn=None):
   """Average area under precision recall curve."""
-  return average_auc(logits, targets, "PR", weights_fn)
+  return average_auc(logits, features, labels, "PR", weights_fn)
 
 
 # Modify metrics.
@@ -229,36 +239,21 @@ class BinaryClassLabelModality(modality.Modality):
 
   @property
   def targets_weights_fn(self):
+    """Returns a function to weight the eval metrics."""
+    return common_layers.weights_all  # Uniform weights.
+
+  @property
+  def loss_weights_fn(self):
     """Returns a function to weight the loss."""
     hp = self._model_hparams
     if hp and not hp.get("pos_weight"):
       return common_layers.weights_all
     def pos_weights_fn(targets):
+      # Weigh positive examples to correct for class imbalance.
       is_neg = tf.to_float(tf.equal(targets, 0))
       is_pos = tf.to_float(tf.equal(targets, 1))
       return hp.pos_weight * is_pos + is_neg
     return pos_weights_fn
-
-  def tensorboard_summaries(self, logits, targets):
-    """A method that is called in `self.loss(...)` that logs to TensorBoard.
-
-    Args:
-      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
-      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
-        values in (0, 1).
-
-    Returns:
-      None.
-    """
-    weighted_average_auroc = tf.multiply(*average_auroc(logits, targets))
-    weighted_average_auprc = tf.multiply(*average_auprc(logits, targets))
-    tf.summary.scalar("metrics/average_auprc", weighted_average_auroc)
-    tf.summary.scalar("metrics/average_auprc", weighted_average_auprc)
-
-    # Logging AUC metrics for individual labels.
-    # TODO(alexyku): can we display multple curves on the same plot?
-    # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
-    # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
 
   def loss(self, logits, targets):
     """Logits to loss.
@@ -270,18 +265,16 @@ class BinaryClassLabelModality(modality.Modality):
 
     Returns:
       A tuple containing:
-      loss_numerator: A Tensor with shape [1].
-      loss_denominator: A Tensor with shape [1].
+        loss_numerator: A Tensor with shape [1].
+        loss_denominator: A Tensor with shape [1].
     """
-    # TensorBoard summaries.
-    self.tensorboard_summaries(logits, targets)
     logits = keep_first_dims(logits, 2)
     targets = keep_first_dims(targets, 2)
     loss = tf.losses.sigmoid_cross_entropy(
         multi_class_labels=targets,
         logits=logits,
         reduction="none")
-    weights = self.targets_weights_fn(targets)
+    weights = self.loss_weights_fn(targets)
     return tf.reduce_sum(loss * weights), tf.reduce_sum(weights)
 
 
@@ -300,10 +293,6 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
   @property
   def name(self):
     return "binary_imputation_class_label_modality_%d" % self._body_input_depth
-
-  def tensorboard_summaries(self, logits, targets):
-    # TODO(alexyku): compute AUC w.r.t. masked targets.
-    super().tensorboard_summaries(logits, targets)
 
 
 ################################################################################
@@ -494,6 +483,10 @@ class DeepseaProblem(problem.Problem):
 class TftiDeepseaProblem(DeepseaProblem):
   """DeepSEA problem for imputation models, such as TFTI."""
 
+  @property
+  def unk_id(self):
+    return BinaryImputationClassLabelModality.UNK_ID
+
   def hparams(self, defaults, model_hparams):
     """See base class."""
     super().hparams(defaults, model_hparams)
@@ -512,48 +505,26 @@ class TftiDeepseaProblem(DeepseaProblem):
         ID to be imputed by the model. The unknown ID is specified by:
           BinaryImputationClassLabelModality.UNK_ID
     """
-    unk_id = BinaryImputationClassLabelModality.UNK_ID
     if not hparams.get("latent_dropout"):
       # Sets everything to the unknown ID by default.
-      latents = tf.ones(common_layers.shape_list(targets)) * unk_id
+      latents = tf.ones(common_layers.shape_list(targets)) * self.unk_id
     else:
       # Latent dropout is the probability of keeping a ground-truth label.
       keep_mask = tf.to_float(tf.random_uniform(
         common_layers.shape_list(targets)) < hparams.latent_dropout)
-      latents = keep_mask * tf.to_float(targets) + (1.0 - keep_mask) * unk_id
+      latents = (keep_mask * tf.to_float(targets)
+                 + (1.0 - keep_mask) * self.unk_id)
     return tf.to_int32(latents)
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
     example["latents"] = self.make_latents(example["targets"], hparams)
+    # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
+    example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
+                                                      self.unk_id))
     return example
 
-
-
-@registry.register_problem("genomics_binding_deepsea_gm12878")
-class GM12878DeepseaProblem(TftiDeepseaProblem):
-  """GM12878 Cell type specific imputation problem"""
-
-  def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
-    # Indices for TF labels specific to GM12878 cell type.
-    # These are ordered so TFs are alphabetical
-    gm12878_indices = np.array([204, 205, 207, 410, 210, 412, 413, 127, 128, 212, 216, 420, 421, 423, 223, 428, 229, 230, 436, 235, 233, 437, 236, 237, 238, 240, 442, 241, 243, 444, 244, 447, 725, 224])
-    
-    # argsort indices
-    argsort_indices = np.argsort(gm12878_indices)
-    gather_indices_sorted = np.sort(gm12878_indices)
-
-    # Keep only targets and latents corresponding to GM12878 (LCL cell line)
-    targets = tf.gather(example["targets"], gather_indices_sorted)
-    latents = tf.gather(example["latents"], gather_indices_sorted)
-    
-    # Make sure tensors are sorted by alphabetical TFs
-    example["targets"] = tf.gather(targets, argsort_indices)
-    example["latents"] = tf.gather(latents, argsort_indices)
-    
-    return example
 
 @registry.register_problem("genomics_binding_deepsea_tf")
 class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
@@ -574,6 +545,7 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
     example = super().preprocess_example(example, mode, hparams)
     example["targets"] = example["targets"][125:815]
     example["latents"] = example["latents"][125:815]
+    example["metrics_weights"] = example["metrics_weights"][125:815]
     return example
 
 
@@ -599,6 +571,45 @@ class HelaS3DeepseaProblem(TftiDeepseaProblem):
          539, 540, 541, 542, 543, 544, 545, 546, 736, 737, 738, 791])
     example["targets"] = tf.gather(example["targets"], gather_indices)
     example["latents"] = tf.gather(example["latents"], gather_indices)
+    example["metrics_weights"] = tf.gather(example["metrics_weights"],
+                                           gather_indices)
+    return example
+
+
+@registry.register_problem("genomics_binding_deepsea_gm12878")
+class Gm12878DeepseaProblem(TftiDeepseaProblem):
+  """DeepSEA Imputation problem for the GM12878 cell culture."""
+
+  def preprocess_example(self, example, mode, hparams):
+    """Slices latents and targets to only include indices of GM12878 labels.
+
+    Indices come from:
+    (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
+        nmeth.3547-S3.xlsx)
+
+    See base class for method signature.
+    """
+    example = super().preprocess_example(example, mode, hparams)
+    # These are ordered so TFs are alphabetically.
+    gather_indices = np.array(
+        [204, 205, 207, 410, 210, 412, 413, 127, 128, 212, 216, 420, 421,
+         423, 223, 428, 229, 230, 436, 235, 233, 437, 236, 237, 238, 240,
+         442, 241, 243, 444, 244, 447, 725, 224])
+    
+    # Argsort indices to preserve ordering.
+    argsort_indices = np.argsort(gather_indices)
+    gather_indices_sorted = np.sort(gather_indices)
+
+    # Keep targets and latents corresponding to GM12878 (LCL cell line).
+    targets = tf.gather(example["targets"], gather_indices_sorted)
+    latents = tf.gather(example["latents"], gather_indices_sorted)
+    metrics_weights = tf.gather(example["metrics_weights"],
+                                gather_indices_sorted)
+    
+    # Ensure sure tensors are sorted by alphabetical TFs.
+    example["targets"] = tf.gather(targets, argsort_indices)
+    example["latents"] = tf.gather(latents, argsort_indices)
+    example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
     return example
 
 
@@ -616,6 +627,37 @@ class TftiTransformer(transformer.Transformer):
   in as inputs a latent binary label set in (0, 1, ?) and outputs a complete
   label set in (0, 1).
   """
+
+  def tensorboard_summaries(self, logits, features, labels):
+    """A method that is called in `self.top(...)` that logs to TensorBoard.
+
+    This is called in `self.top(...)` because it is the only place where
+    both the logits and features (including labels) are available.
+
+    Args:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      features: A features dict mapping keys to Tensors.
+      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
+        values in (0, 1).
+
+    Returns:
+      None.
+    """
+    weighted_auroc = tf.multiply(*average_auroc(logits, features, labels))
+    weighted_auprc = tf.multiply(*average_auprc(logits, features, labels))
+    tf.summary.scalar("metrics/average_auprc", weighted_auroc)
+    tf.summary.scalar("metrics/average_auprc", weighted_auprc)
+
+    # Logging AUC metrics for individual labels.
+    # TODO(alexyku): can we display multple curves on the same plot?
+    # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
+    # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
+
+  def top(self, body_output, features):
+    logits = super().top(body_output, features)
+    # TensorBoard summaries.
+    self.tensorboard_summaries(logits, features, features["targets"])
+    return logits
   
   def body(self, features):
     """Transformer main model_fn.
