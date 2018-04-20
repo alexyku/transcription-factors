@@ -109,7 +109,7 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
       labels=elems[0], predictions=elems[1], weights=elems[2], curve=curve,
       updates_collections=tf.GraphKeys.METRIC_VARIABLES)
     # Since elems is a 3-tuple, `tf.map_fn` requires we return a 3-tuple.
-    return auc_op, tf.constant(1.0), tf.constant(1.0)
+    return auc_op, elems[2], tf.constant(1.0)
   
   predictions = tf.nn.sigmoid(logits)
   labels = tf.to_float(tf.transpose(labels, [1, 0]))  # [nlabels, batch]
