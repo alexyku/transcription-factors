@@ -618,7 +618,7 @@ class TftiTransformer(transformer.Transformer):
     """
     weighted_auroc = tf.multiply(*average_auroc(logits, labels, features))
     weighted_auprc = tf.multiply(*average_auprc(logits, labels, features))
-    tf.summary.scalar("metrics/average_auprc", weighted_auroc)
+    tf.summary.scalar("metrics/average_aupoc", weighted_auroc)
     tf.summary.scalar("metrics/average_auprc", weighted_auprc)
 
     # Logging AUC metrics for individual labels.
