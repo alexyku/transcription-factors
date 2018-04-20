@@ -549,33 +549,6 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
     return example
 
 
-@registry.register_problem("genomics_binding_deepsea_helas3")
-class HelaS3DeepseaProblem(TftiDeepseaProblem):
-  """DeepSEA Imputation problem for the HeLa-S3 cell culture."""
-
-  def preprocess_example(self, example, mode, hparams):
-    """Slices latents and targets to only include indices of HeLa-S3 labels.
-
-    Indices come from:
-    (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
-        nmeth.3547-S3.xlsx)
-
-    See base class for method signature.
-    """
-    example = super().preprocess_example(example, mode, hparams)
-    gather_indices = np.array(
-        [134, 135, 136, 291, 292, 293, 294, 494, 495, 496, 497, 498, 499,
-         500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512,
-         513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523, 524, 525,
-         526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538,
-         539, 540, 541, 542, 543, 544, 545, 546, 736, 737, 738, 791])
-    example["targets"] = tf.gather(example["targets"], gather_indices)
-    example["latents"] = tf.gather(example["latents"], gather_indices)
-    example["metrics_weights"] = tf.gather(example["metrics_weights"],
-                                           gather_indices)
-    return example
-
-
 @registry.register_problem("genomics_binding_deepsea_gm12878")
 class Gm12878DeepseaProblem(TftiDeepseaProblem):
   """DeepSEA Imputation problem for the GM12878 cell culture."""
