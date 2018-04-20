@@ -673,12 +673,18 @@ class TftiTransformer(transformer.Transformer):
       Final decoder representation. [batch_size, decoder_length, hidden_dim]
     """
     hparams = self._hparams
+
+    hparams.ffn_layer = "conv_relu_conv"
+
     encoder_output, encoder_decoder_attention_bias = self.encode(
         inputs=features["inputs"],
         target_space=features["target_space_id"],
         hparams=hparams,
         features=features)
     # No positional embeddings on decoder side.
+
+    hparams.ffn_layer = "dense_relu_dense"
+
     decoder_output = self.decode(
         decoder_input=common_layers.flatten4d3d(features["latents"]),
         encoder_output=encoder_output,
@@ -699,6 +705,7 @@ def tfti_transformer_base():
   hparams = transformer.transformer_base()
   hparams.batch_size = 64
   hparams.pos_weight = 25
+  hparams.add_hparam("latent_dropout", 0.0)
   return hparams
 
 
