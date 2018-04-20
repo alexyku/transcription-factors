@@ -86,7 +86,7 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
   labels = keep_first_dims(labels, 2)
 
   # `metrics_weights` is an alternative to `weights_fn`.
-  if "metrics_weights" in features:
+  if features and "metrics_weights" in features:
     weights = keep_first_dims(features["metrics_weights"], 2)
   else:
     weights = tf.ones(common_layers.shape_list(labels))  # Uniform weights.
@@ -126,22 +126,22 @@ def average_auc(logits, features, labels, curve,  weights_fn=None):
   return weighted_average_auc, tf.constant(1.0)
 
 
-def set_auroc(logits, features, labels, weights_fn=None):
+def set_auroc(logits, labels, features=None, weights_fn=None):
   """Area under receiver operator curve."""
   return set_auc(logits, features, labels, "ROC", weights_fn)
 
 
-def set_auprc(logits, features, labels, weights_fn=None):
+def set_auprc(logits, labels, features=None, weights_fn=None):
   """Area under precision recall curve."""
   return set_auc(logits, features, labels, "PR", weights_fn)
 
 
-def average_auroc(logits, features, labels, weights_fn=None):
+def average_auroc(logits, labels, features=None, weights_fn=None):
   """Average area under receiver operator curve."""
   return average_auc(logits, features, labels, "ROC", weights_fn)
 
 
-def average_auprc(logits, features, labels, weights_fn=None):
+def average_auprc(logits, labels, features=None, weights_fn=None):
   """Average area under precision recall curve."""
   return average_auc(logits, features, labels, "PR", weights_fn)
 
@@ -505,13 +505,13 @@ class TftiDeepseaProblem(DeepseaProblem):
         ID to be imputed by the model. The unknown ID is specified by:
           BinaryImputationClassLabelModality.UNK_ID
     """
-    if not hparams.get("latent_dropout"):
+    if not hparams.get("latent_keep_prob"):
       # Sets everything to the unknown ID by default.
       latents = tf.ones(common_layers.shape_list(targets)) * self.unk_id
     else:
       # Latent dropout is the probability of keeping a ground-truth label.
       keep_mask = tf.to_float(tf.random_uniform(
-        common_layers.shape_list(targets)) < hparams.latent_dropout)
+        common_layers.shape_list(targets)) < hparams.latent_keep_prob)
       latents = (keep_mask * tf.to_float(targets)
                  + (1.0 - keep_mask) * self.unk_id)
     return tf.to_int32(latents)
@@ -643,8 +643,8 @@ class TftiTransformer(transformer.Transformer):
     Returns:
       None.
     """
-    weighted_auroc = tf.multiply(*average_auroc(logits, features, labels))
-    weighted_auprc = tf.multiply(*average_auprc(logits, features, labels))
+    weighted_auroc = tf.multiply(*average_auroc(logits, labels, features))
+    weighted_auprc = tf.multiply(*average_auprc(logits, labels, features))
     tf.summary.scalar("metrics/average_auprc", weighted_auroc)
     tf.summary.scalar("metrics/average_auprc", weighted_auprc)
 
@@ -705,7 +705,7 @@ def tfti_transformer_base():
   hparams = transformer.transformer_base()
   hparams.batch_size = 64
   hparams.pos_weight = 25
-  hparams.add_hparam("latent_dropout", 0.0)
+  hparams.add_hparam("latent_keep_prob", 0.0)
   return hparams
 
 
@@ -717,6 +717,6 @@ def tfti_transformer_debug():
   hparams.num_hidden_layers = 2
   hparams.hidden_size = 8
   hparams.num_heads = 2
-  hparams.latent_dropout = 0.5
+  hparams.latent_keep_prob = 0.5
   hparams.pos_weight = 10
   return hparams
