@@ -212,6 +212,13 @@ class BinaryClassLabelModality(modality.Modality):
     """
     with tf.variable_scope(self.name):
       res = set_embedding(x, self._vocab_size, self._body_input_depth)
+    with tf.variable_scope("latent_zeroing", reuse=tf.AUTO_REUSE):
+      global_step = tf.to_float(tf.train.get_or_create_global_step())
+      # TODO(weston): Use hparams
+      mask = tf.to_float(global_step < 60000)
+      res *= mask
+      res = (mask * tf.to_float(res)
+                 + (1.0 - mask) * BinaryImputationClassLabelModality.UNK_ID)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
   def top(self, body_output, _):
@@ -318,6 +325,12 @@ class DeepseaProblem(problem.Problem):
   @property
   def input_sequence_length(self):
     return 1000 # Number of residues.
+
+  def preprocess(self, dataset, mode, hparams):
+    dataset = super().preprocess(dataset, mode, hparams)
+    if mode == tf.estimator.ModeKeys.EVAL:
+      dataset = dataset.repeat(count=10)
+    return dataset
 
   def eval_metrics(self):
     """Metrics to run in the eval loop."""
@@ -678,8 +691,9 @@ def tfti_transformer_base():
   """Hparams extends `transformer_base`."""
   hparams = transformer.transformer_base()
   hparams.batch_size = 64
-  hparams.pos_weight = 25
-  hparams.add_hparam("latent_keep_prob", 0.0)
+  hparams.add_hparam("pos_weight", 1)
+  hparams.add_hparam("latent_keep_prob", 0.5)
+  hparams.add_hparam("pretrain_steps", 60000)
   return hparams
 
 
