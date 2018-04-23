@@ -804,7 +804,7 @@ def tfti_transformer_base():
   """Hparams extends `transformer_base`."""
   hparams = transformer.transformer_base()
   hparams.batch_size = 64
-  hparams.add_hparam("pos_weight", 1)
+  hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 60000)
   return hparams
