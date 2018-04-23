@@ -215,7 +215,6 @@ class BinaryClassLabelModality(modality.Modality):
     with tf.variable_scope("latent_zeroing", reuse=tf.AUTO_REUSE):
       global_step = tf.to_float(tf.train.get_or_create_global_step())
       mask = tf.to_float(global_step < self._model_hparams.pretrain_steps)
-      res *= mask
       res = (mask * tf.to_float(res)
                  + (1.0 - mask) * BinaryImputationClassLabelModality.UNK_ID)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
