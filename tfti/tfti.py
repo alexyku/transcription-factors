@@ -214,8 +214,7 @@ class BinaryClassLabelModality(modality.Modality):
       res = set_embedding(x, self._vocab_size, self._body_input_depth)
     with tf.variable_scope("latent_zeroing", reuse=tf.AUTO_REUSE):
       global_step = tf.to_float(tf.train.get_or_create_global_step())
-      # TODO(weston): Use hparams
-      mask = tf.to_float(global_step < 60000)
+      mask = tf.to_float(global_step < self._model_hparams.pretrain_steps)
       res *= mask
       res = (mask * tf.to_float(res)
                  + (1.0 - mask) * BinaryImputationClassLabelModality.UNK_ID)
