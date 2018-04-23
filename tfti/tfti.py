@@ -304,6 +304,24 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
 
 
 ################################################################################
+################################## ENCODERS ####################################
+################################################################################
+
+
+class BinaryClassLabelEncoder(text_encoder.TextEncoder):
+    def __init__(self, neg_chr="0", pos_chr="1"):
+      self._num_reserved_ids = 0
+      self._chr_to_id = {neg_chr: 0, pos_chr: 1}
+      self._id_to_chr = {0: neg_chr, 1: pos_chr}
+    
+    def encode(self, label_str):
+      return [self._chr_to_id[x] for x in label_str]
+    
+    def decode(self, ids):
+      return "".join([self._id_to_chr[x] for x in ids])
+
+
+################################################################################
 ################################## PROBLEMS ####################################
 ################################################################################
 
@@ -340,6 +358,13 @@ class DeepseaProblem(problem.Problem):
   def dataset_filename(self):
     """Data set filename (shared among subclasses)."""
     return "genomics_binding_deepsea"
+
+  def feature_encoders(self, data_dir):
+    del data_dir
+    return {
+        "inputs": dna_encoder.DNAEncoder(self.chunk_size),
+        "targets": BinaryClassLabelEncoder(),
+    }
   
   def stringify(self, one_hot_seq):
     """One-hot sequence to an ACTG string.
@@ -447,7 +472,7 @@ class DeepseaProblem(problem.Problem):
       None.
     """
     p = defaults
-    vocab_size = dna_encoder.DNAEncoder(self.chunk_size).vocab_size
+    vocab_size = self._encoders["inputs"].vocab_size
     p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)}
     p.target_modality = ("%s:binary" % registry.Modalities.CLASS_LABEL, None)
     p.input_space_id = problem.SpaceID.DNA
@@ -480,7 +505,7 @@ class DeepseaProblem(problem.Problem):
     """
     inputs = example["inputs"]
     targets = example["targets"]
-    encoder = dna_encoder.DNAEncoder(self.chunk_size)
+    encoder = self._encoders["inputs"]
     def to_ids(inputs):
       ids = encoder.encode("".join(map(chr, inputs)))
       return np.array(ids, dtype=np.int64)
@@ -539,6 +564,76 @@ class TftiDeepseaProblem(DeepseaProblem):
                                                       self.unk_id))
     return example
 
+  def load_names(self, namefile):
+    '''
+    Loads DeepSea label names from namefile
+    '''
+    return np.array(open(namefile).read().split(','))
+
+  def getOverlappingIndicesForCellType(self, cellType1, cellType2):
+    '''
+    Gets target indices for transcription factors for the union of cellType1 and cellType2.
+    :param cellType1 Name of cell type 1
+    :param cellType2 Name of cell type 2
+    '''
+    
+    namefile = '../docs/deepsea_label_names.txt'
+    names = self.load_names(namefile)
+    
+    valid_tfs = list(map(lambda x: x.split('|')[1],names[125:815] ))
+    
+    # Make sure cell type parameters can be found in our data 
+    assert(cellType1 in valid_tfs, ("%s not in list of valid TFs" %(cellType1)))
+    assert(cellType2 in valid_tfs, ("%s not in list of valid TFs" %(cellType2)))
+        
+    # get positions for LCL and Embryonic cell lines
+    cellType1_positions = [(i,j) for i, j in enumerate(names) if cellType1 in j and 'DNase' not in j]
+    cellType2_positions = [(i,j) for i, j in enumerate(names) if cellType2 in j and 'DNase' not in j]
+
+    # get TFs
+    cellType1_tfs =  [i[1].split('|')[1] for i in cellType1_positions]
+    cellType2_tfs =  [i[1].split('|')[1] for i in cellType2_positions]
+    
+    # Get overlapping TFs between both celltypes
+    overlapping_tfs = list(set(cellType1_tfs) & set(cellType2_tfs))
+
+    cellType1_final_positions = [(i,j) for i, j in cellType1_positions if j.split('|')[1] in overlapping_tfs]
+    cellType2_final_positions = [(i,j) for i, j in  cellType2_positions if j.split('|')[1] in overlapping_tfs]
+
+
+    # filter out duplicates for both cell types
+    cellType1_items = []
+    seen = set()
+    for item in cellType1_final_positions:
+        if not item[1] in seen:
+            seen.add(item[1])
+            cellType1_items.append(item)
+
+    cellType1_items = sorted(cellType1_items, key=lambda i: i[1]) 
+    
+    # Print out sorted TFs
+    tf.logging.info("TFs for CellType %s: %s" 
+                    % (list(map(lambda x: x[1].split('|')[1], cellType1_items)), 
+                    overlapping_tfs))
+
+    cellType2_items = []
+    seen = set()
+    for item in cellType2_final_positions:
+        if not item[1] in seen:
+            seen.add(item[1])
+            cellType2_items.append(item)
+
+    cellType2_items = sorted(cellType2_items, key=lambda i: i[1])
+
+    # verify that TFs match between cell types
+    for i, item in enumerate(cellType2_items):
+        assert(cellType2_items[i][1].split('|')[1]==cellType1_items[i][1].split('|')[1])
+
+    # These are the indices we are using for the cellType1 model
+    cellType1_indices = list(map(lambda x: x[0], cellType1_items))
+    
+    return cellType1_indices
+
 
 @registry.register_problem("genomics_binding_deepsea_tf")
 class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
@@ -562,26 +657,18 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
     example["metrics_weights"] = example["metrics_weights"][125:815]
     return example
 
+################# Cell Type Specific TF Problems #####################
 
 @registry.register_problem("genomics_binding_deepsea_gm12878")
 class Gm12878DeepseaProblem(TftiDeepseaProblem):
-  """DeepSEA Imputation problem for the GM12878 cell culture."""
+  """GM12878 Cell type specific imputation problem"""
 
   def preprocess_example(self, example, mode, hparams):
-    """Slices latents and targets to only include indices of GM12878 labels.
-
-    Indices come from:
-    (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
-        nmeth.3547-S3.xlsx)
-
-    See base class for method signature.
-    """
     example = super().preprocess_example(example, mode, hparams)
-    # These are ordered so TFs are alphabetically.
-    gather_indices = np.array(
-        [204, 205, 207, 410, 210, 412, 413, 127, 128, 212, 216, 420, 421,
-         423, 223, 428, 229, 230, 436, 235, 233, 437, 236, 237, 238, 240,
-         442, 241, 243, 444, 244, 447, 725, 224])
+    # Indices for TF labels specific to GM12878 cell type.
+    # These are ordered so TFs are alphabetical
+    
+    gather_indices = super().getOverlappingIndicesForCellType('GM12878', 'H1-hESC')
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
@@ -599,6 +686,33 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
     example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
     return example
 
+
+@registry.register_problem("genomics_binding_deepsea_h1hesc")
+class H1hESCDeepseaProblem(TftiDeepseaProblem):
+  """H1-hESC Cell type specific imputation problem"""
+
+  def preprocess_example(self, example, mode, hparams):
+    example = super().preprocess_example(example, mode, hparams)
+    # Indices for TF labels specific to GM12878 cell type.
+    # These are ordered so TFs are alphabetical
+    
+    gather_indices = super().getOverlappingIndicesForCellType('H1-hESC','GM12878')
+    
+    # Argsort indices to preserve ordering.
+    argsort_indices = np.argsort(gather_indices)
+    gather_indices_sorted = np.sort(gather_indices)
+
+    # Keep targets and latents corresponding to H1-hESC.
+    targets = tf.gather(example["targets"], gather_indices_sorted)
+    latents = tf.gather(example["latents"], gather_indices_sorted)
+    metrics_weights = tf.gather(example["metrics_weights"],
+                                gather_indices_sorted)
+    
+    # Ensure sure tensors are sorted by alphabetical TFs.
+    example["targets"] = tf.gather(targets, argsort_indices)
+    example["latents"] = tf.gather(latents, argsort_indices)
+    example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
+    return example
 
 ################################################################################
 ################################### MODELS #####################################
