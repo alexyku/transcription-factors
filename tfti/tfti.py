@@ -212,11 +212,6 @@ class BinaryClassLabelModality(modality.Modality):
     """
     with tf.variable_scope(self.name):
       res = set_embedding(x, self._vocab_size, self._body_input_depth)
-    with tf.variable_scope("latent_zeroing", reuse=tf.AUTO_REUSE):
-      global_step = tf.to_float(tf.train.get_or_create_global_step())
-      mask = tf.to_float(global_step < self._model_hparams.pretrain_steps)
-      res = (mask * tf.to_float(res)
-                 + (1.0 - mask) * BinaryImputationClassLabelModality.UNK_ID)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
   def top(self, body_output, _):
@@ -300,6 +295,24 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
   def name(self):
     return "binary_imputation_class_label_modality_%d" % self._body_input_depth
 
+  def bottom(self, x):
+    """Class label space to embeddings.
+
+    Args:
+      x: An int Tensor with shape [batch_size, nlabels, 1, 1] whose elements
+        are in [0, self._vocab_size).
+
+    Returns:
+      A float Tensor with shape [batch_size, nlabels, 1, hidden_size].
+    """
+    with tf.variable_scope(self.name):
+      res = set_embedding(x, self._vocab_size, self._body_input_depth)
+    with tf.variable_scope("latent_zeroing", reuse=tf.AUTO_REUSE):
+      global_step = tf.to_float(tf.train.get_or_create_global_step())
+      mask = tf.to_float(self._model_hparams.pretrain_steps < global_step)
+      res = (mask * tf.to_float(res)
+                 + (1.0 - mask) * self.UNK_ID)
+      return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
 ################################################################################
 ################################## ENCODERS ####################################
@@ -343,6 +356,16 @@ class DeepseaProblem(problem.Problem):
     return 1000 # Number of residues.
 
   def preprocess(self, dataset, mode, hparams):
+    """Repeats the dataset 10 times if in evaluation mode. 
+
+    Args:
+      dataset: the Dataset of already decoded but not yet preprocessed features.
+      mode: tf.estimator.ModeKeys
+      hparams: HParams, model hyperparameters
+
+    Returns:
+      a Dataset
+    """
     dataset = super().preprocess(dataset, mode, hparams)
     if mode == tf.estimator.ModeKeys.EVAL:
       dataset = dataset.repeat(count=10)
@@ -805,7 +828,7 @@ def tfti_transformer_base():
   hparams.batch_size = 64
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
-  hparams.add_hparam("pretrain_steps", 60000)
+  hparams.add_hparam("pretrain_steps", 0)
   return hparams
 
 
