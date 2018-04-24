@@ -609,8 +609,8 @@ class TftiDeepseaProblem(DeepseaProblem):
     valid_cell_types = list(map(lambda x: x.split("|")[1], names))
     
     # Make sure cell type parameters can be found in our data. 
-    assert(cell_type_1 in valid_cell_types, f"{cell_type_1} not in list of valid TFs")
-    assert(cell_type_2 in valid_cell_types, f"{cell_type_2} not in list of valid TFs")
+    assert(cell_type_1 in valid_cell_types, f"{cell_type_1} not in list of valid cell types")
+    assert(cell_type_2 in valid_cell_types, f"{cell_type_2} not in list of valid cell types")
         
     # Get positions for both cell lines.
     cell_type_1_pos = [(i, j) for i, j in enumerate(names) \
