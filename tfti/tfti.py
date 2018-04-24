@@ -700,7 +700,7 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = super().getOverlappingIndicesForCellType("GM12878", "H1-hESC")
+    gather_indices = super().get_overlapping_indices_for_cell_type("GM12878", "H1-hESC")
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
@@ -720,7 +720,7 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
 
 
 @registry.register_problem("genomics_binding_deepsea_h1hesc")
-class H1hESCDeepseaProblem(TftiDeepseaProblem):
+class H1hescDeepseaProblem(TftiDeepseaProblem):
   """H1-hESC Cell type specific imputation problem"""
 
   def preprocess_example(self, example, mode, hparams):
@@ -728,7 +728,7 @@ class H1hESCDeepseaProblem(TftiDeepseaProblem):
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = super().getOverlappingIndicesForCellType("H1-hESC","GM12878")
+    gather_indices = super().get_overlapping_indices_for_cell_type("H1-hESC","GM12878")
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
