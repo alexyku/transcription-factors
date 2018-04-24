@@ -797,7 +797,7 @@ class TftiTransformer(transformer.Transformer):
     hparams = self._hparams
 
     hparams.ffn_layer = "conv_hidden_relu_with_sepconv"
-    hparams.self_attention_type = "local_1d"
+    hparams.self_attention_type = "local_unmasked"
 
     encoder_output, encoder_decoder_attention_bias = self.encode(
         inputs=features["inputs"],
