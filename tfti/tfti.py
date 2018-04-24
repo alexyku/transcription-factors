@@ -75,8 +75,8 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
     features: A feature dict mapping keys to Tensors.
     labels: A Tensor of int32s giving true set elements,
       of shape [batch, nlabels, 1, 1].
-    curve: Specifies the name of the curve to be computed, 'ROC' [default] or
-      'PR' for the Precision-Recall-curve.
+    curve: Specifies the name of the curve to be computed, "ROC" [default] or
+      "PR" for the Precision-Recall-curve.
     weights_fn: A function to weight the elements (unused).
   Returns:
     aucs: A Tensor of shape [nlabels].
@@ -314,6 +314,7 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
                  + (1.0 - mask) * self.UNK_ID)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
+
 ################################################################################
 ################################## ENCODERS ####################################
 ################################################################################
@@ -426,8 +427,8 @@ class DeepseaProblem(problem.Problem):
     def valid_generator():
       filename = os.path.join(tmp_dir, "deepsea_train/valid.mat")
       tmp = scipy.io.loadmat(filename)
-      inputs = tmp['validxdata']
-      targets = tmp['validdata']
+      inputs = tmp["validxdata"]
+      targets = tmp["validdata"]
       for i in xrange(inputs.shape[0]):
         yield (self.stringify(inputs[i].transpose([1, 0])),
              targets[i])
@@ -441,7 +442,7 @@ class DeepseaProblem(problem.Problem):
              "targets": list(map(int, targets))}
   
   def maybe_download_and_unzip(self, tmp_dir):
-    """Downloads deepsea data if it doesn't already exist.
+    """Downloads deepsea data if it doesn"t already exist.
 
     Args:
       tmp_dir: String. The directory to maybe download to.
@@ -586,74 +587,80 @@ class TftiDeepseaProblem(DeepseaProblem):
     return example
 
   def load_names(self, namefile):
-    '''
-    Loads DeepSea label names from namefile
-    '''
-    return np.array(open(namefile).read().split(','))
+    """
+    Loads DeepSEA label names from namefile.
+    """
+    return np.array(open(namefile).read().split(","))
 
-  def getOverlappingIndicesForCellType(self, cellType1, cellType2):
-    '''
-    Gets target indices for transcription factors for the union of cellType1 and cellType2.
-    :param cellType1 Name of cell type 1
-    :param cellType2 Name of cell type 2
-    '''
+  def get_overlapping_indices_for_cell_type(self, cell_type_1, cell_type_2):
+    """
+    Gets target indices for transcription factors for the intersection 
+    of cell_type_1 and cell_type_2.
+
+    Args:
+      cell_type_1: Name of cell type 1 as a string
+      cell_type_2: Name of cell type 2 as a string
+    """
     
-    namefile = '../docs/deepsea_label_names.txt'
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    namefile = dir_path + "/deepsea_label_names.txt"
     names = self.load_names(namefile)
     
-    valid_tfs = list(map(lambda x: x.split('|')[1],names[125:815] ))
+    valid_tfs = list(map(lambda x: x.split("|")[1], names[125:815]))
     
-    # Make sure cell type parameters can be found in our data 
-    assert(cellType1 in valid_tfs, ("%s not in list of valid TFs" %(cellType1)))
-    assert(cellType2 in valid_tfs, ("%s not in list of valid TFs" %(cellType2)))
+    # Make sure cell type parameters can be found in our data. 
+    assert(cell_type_1 in valid_tfs, f"{cell_type_1} not in list of valid TFs")
+    assert(cell_type_2 in valid_tfs, f"{cell_type_2} not in list of valid TFs")
         
-    # get positions for LCL and Embryonic cell lines
-    cellType1_positions = [(i,j) for i, j in enumerate(names) if cellType1 in j and 'DNase' not in j]
-    cellType2_positions = [(i,j) for i, j in enumerate(names) if cellType2 in j and 'DNase' not in j]
+    # Get positions for LCL and Embryonic cell lines.
+    cell_type_1_pos = [(i, j) for i, j in enumerate(names) \
+                        if cell_type_1 in j and "DNase" not in j]
+    cell_type_2_pos = [(i, j) for i, j in enumerate(names) \
+                        if cell_type_2 in j and "DNase" not in j]
 
-    # get TFs
-    cellType1_tfs =  [i[1].split('|')[1] for i in cellType1_positions]
-    cellType2_tfs =  [i[1].split('|')[1] for i in cellType2_positions]
+    # Get TFs.
+    cell_type_1_tfs =  [i[1].split("|")[1] for i in cell_type_1_pos]
+    cell_type_2_tfs =  [i[1].split("|")[1] for i in cell_type_2_pos]
     
-    # Get overlapping TFs between both celltypes
-    overlapping_tfs = list(set(cellType1_tfs) & set(cellType2_tfs))
+    # Get overlapping TFs between both cell types.
+    overlapping_tfs = list(set(cell_type_1_tfs) & set(cell_type_2_tfs))
 
-    cellType1_final_positions = [(i,j) for i, j in cellType1_positions if j.split('|')[1] in overlapping_tfs]
-    cellType2_final_positions = [(i,j) for i, j in  cellType2_positions if j.split('|')[1] in overlapping_tfs]
+    cell_type_1_final_pos = [(i,j) for i, j in cell_type_1_pos if \
+                                    j.split("|")[1] in overlapping_tfs]
+    cell_type_2_final_pos = [(i,j) for i, j in  cell_type_2_pos if \
+                                    j.split("|")[1] in overlapping_tfs]
 
-
-    # filter out duplicates for both cell types
-    cellType1_items = []
+    # Filter out duplicates for both cell types.
+    cell_type_1_items = []
     seen = set()
-    for item in cellType1_final_positions:
-        if not item[1] in seen:
-            seen.add(item[1])
-            cellType1_items.append(item)
+    for item in cell_type_1_final_pos:
+      if item[1] not in seen:
+        seen.add(item[1])
+        cell_type_1_items.append(item)
 
-    cellType1_items = sorted(cellType1_items, key=lambda i: i[1]) 
+    cell_type_1_items = sorted(cell_type_1_items, key=lambda i: i[1]) 
     
-    # Print out sorted TFs
+    # Print out sorted TFs.
     tf.logging.info("TFs for CellType %s: %s" 
-                    % (list(map(lambda x: x[1].split('|')[1], cellType1_items)), 
+                    % (list(map(lambda x: x[1].split("|")[1], cell_type_1_items)), 
                     overlapping_tfs))
 
-    cellType2_items = []
+    cell_type_2_items = []
     seen = set()
-    for item in cellType2_final_positions:
-        if not item[1] in seen:
-            seen.add(item[1])
-            cellType2_items.append(item)
+    for item in cell_type_2_final_pos:
+      if not item[1] in seen:
+        seen.add(item[1])
+        cell_type_2_items.append(item)
 
-    cellType2_items = sorted(cellType2_items, key=lambda i: i[1])
+    cell_type_2_items = sorted(cell_type_2_items, key=lambda i: i[1])
 
-    # verify that TFs match between cell types
-    for i, item in enumerate(cellType2_items):
-        assert(cellType2_items[i][1].split('|')[1]==cellType1_items[i][1].split('|')[1])
+    # Verify that TFs match between cell types.
+    for i, item in enumerate(cell_type_2_items):
+      assert(cell_type_2_items[i][1].split("|")[1] == cell_type_1_items[i][1].split("|")[1])
 
-    # These are the indices we are using for the cellType1 model
-    cellType1_indices = list(map(lambda x: x[0], cellType1_items))
-    
-    return cellType1_indices
+    # These are the indices we are using for the cell type 1 model.
+    cell_type_1_indices = list(map(lambda x: x[0], cell_type_1_items))
+    return cell_type_1_indices
 
 
 @registry.register_problem("genomics_binding_deepsea_tf")
@@ -678,7 +685,11 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
     example["metrics_weights"] = example["metrics_weights"][125:815]
     return example
 
-################# Cell Type Specific TF Problems #####################
+
+################################################################################
+########################## Cell Type Specific Problems #########################
+################################################################################
+
 
 @registry.register_problem("genomics_binding_deepsea_gm12878")
 class Gm12878DeepseaProblem(TftiDeepseaProblem):
@@ -689,7 +700,7 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = super().getOverlappingIndicesForCellType('GM12878', 'H1-hESC')
+    gather_indices = self.get_overlapping_indices_for_cell_type("GM12878", "H1-hESC")
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
@@ -709,7 +720,7 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
 
 
 @registry.register_problem("genomics_binding_deepsea_h1hesc")
-class H1hESCDeepseaProblem(TftiDeepseaProblem):
+class H1hescDeepseaProblem(TftiDeepseaProblem):
   """H1-hESC Cell type specific imputation problem"""
 
   def preprocess_example(self, example, mode, hparams):
@@ -717,7 +728,7 @@ class H1hESCDeepseaProblem(TftiDeepseaProblem):
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = super().getOverlappingIndicesForCellType('H1-hESC','GM12878')
+    gather_indices = self.get_overlapping_indices_for_cell_type("H1-hESC", "GM12878")
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
@@ -734,6 +745,7 @@ class H1hESCDeepseaProblem(TftiDeepseaProblem):
     example["latents"] = tf.gather(latents, argsort_indices)
     example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
     return example
+
 
 ################################################################################
 ################################### MODELS #####################################
