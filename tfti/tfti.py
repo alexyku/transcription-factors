@@ -598,7 +598,8 @@ class TftiDeepseaProblem(DeepseaProblem):
     :param cellType2 Name of cell type 2
     '''
     
-    namefile = '../docs/deepsea_label_names.txt'
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    namefile = dir_path + '/deepsea_label_names.txt'
     names = self.load_names(namefile)
     
     valid_tfs = list(map(lambda x: x.split('|')[1],names[125:815] ))
