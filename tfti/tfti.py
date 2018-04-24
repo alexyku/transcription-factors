@@ -606,29 +606,29 @@ class TftiDeepseaProblem(DeepseaProblem):
     namefile = dir_path + "/deepsea_label_names.txt"
     names = self.load_names(namefile)
     
-    valid_tfs = list(map(lambda x: x.split("|")[1], names[125:815]))
+    valid_cell_types = list(map(lambda x: x.split("|")[1], names))
     
     # Make sure cell type parameters can be found in our data. 
-    assert(cell_type_1 in valid_tfs, f"{cell_type_1} not in list of valid TFs")
-    assert(cell_type_2 in valid_tfs, f"{cell_type_2} not in list of valid TFs")
+    assert(cell_type_1 in valid_cell_types, f"{cell_type_1} not in list of valid cell types")
+    assert(cell_type_2 in valid_cell_types, f"{cell_type_2} not in list of valid cell types")
         
-    # Get positions for LCL and Embryonic cell lines.
+    # Get positions for both cell lines.
     cell_type_1_pos = [(i, j) for i, j in enumerate(names) \
-                        if cell_type_1 in j and "DNase" not in j]
+                        if cell_type_1 in j]
     cell_type_2_pos = [(i, j) for i, j in enumerate(names) \
-                        if cell_type_2 in j and "DNase" not in j]
+                        if cell_type_2 in j]
 
-    # Get TFs.
-    cell_type_1_tfs =  [i[1].split("|")[1] for i in cell_type_1_pos]
-    cell_type_2_tfs =  [i[1].split("|")[1] for i in cell_type_2_pos]
+    # Get marks for each cell type
+    cell_type_1_marks =  [i[1].split("|")[1] for i in cell_type_1_pos]
+    cell_type_2_marks =  [i[1].split("|")[1] for i in cell_type_2_pos]
     
-    # Get overlapping TFs between both cell types.
-    overlapping_tfs = list(set(cell_type_1_tfs) & set(cell_type_2_tfs))
+    # Get overlapping marks between both cell types.
+    overlapping_marks = list(set(cell_type_1_marks) & set(cell_type_2_marks))
 
     cell_type_1_final_pos = [(i,j) for i, j in cell_type_1_pos if \
-                                    j.split("|")[1] in overlapping_tfs]
+                                    j.split("|")[1] in overlapping_marks]
     cell_type_2_final_pos = [(i,j) for i, j in  cell_type_2_pos if \
-                                    j.split("|")[1] in overlapping_tfs]
+                                    j.split("|")[1] in overlapping_marks]
 
     # Filter out duplicates for both cell types.
     cell_type_1_items = []
@@ -640,10 +640,10 @@ class TftiDeepseaProblem(DeepseaProblem):
 
     cell_type_1_items = sorted(cell_type_1_items, key=lambda i: i[1]) 
     
-    # Print out sorted TFs.
-    tf.logging.info("TFs for CellType %s: %s" 
-                    % (list(map(lambda x: x[1].split("|")[1], cell_type_1_items)), 
-                    overlapping_tfs))
+    # Print out sorted marks.
+    tf.logging.info("Marks for CellType %s: %s" 
+                    % (cell_type_1, 
+                    cell_type_1_items))
 
     cell_type_2_items = []
     seen = set()
@@ -848,6 +848,7 @@ def tfti_transformer_base():
 def tfti_transformer_debug():
   """Hparams for debugging."""
   hparams = transformer.transformer_base()
+  hparams.add_hparam("pretrain_steps", 0)
   hparams.batch_size = 2
   hparams.num_hidden_layers = 2
   hparams.hidden_size = 8
