@@ -355,6 +355,10 @@ class DeepseaProblem(problem.Problem):
   def input_sequence_length(self):
     return 1000 # Number of residues.
 
+  @property
+  def prechunked(self):
+    return True
+
   def preprocess(self, dataset, mode, hparams):
     """Repeats the dataset 10 times if in evaluation mode. 
 
@@ -432,12 +436,14 @@ class DeepseaProblem(problem.Problem):
         yield (self.stringify(inputs[i].transpose([1, 0])),
              targets[i])
     generator = train_generator if is_training else valid_generator
+    encoder = self.feature_encoders("")["inputs"]
     for i, (inputs, targets) in enumerate(generator()):
       if (i % 1000 == 0):
         tf.logging.info(f"Generated {i} examples.")
       assert len(inputs) == self.input_sequence_length
       assert len(targets) == self.num_binary_predictions
-      yield {"index": [i], "inputs": list(map(ord, inputs)),
+      yield {"index": [i], #"inputs": list(map(ord, inputs)),
+             "inputs": encoder.encode(inputs),
              "targets": list(map(int, targets))}
   
   def maybe_download_and_unzip(self, tmp_dir):
@@ -505,11 +511,19 @@ class DeepseaProblem(problem.Problem):
     Specify the names and types of the features on disk. Specify
       tf.contrib.slim.tfexample_decoder.
     """
-    data_fields = {
-      "index": tf.FixedLenFeature([1], tf.int64),
-      "inputs": tf.FixedLenFeature([self.input_sequence_length], tf.int64),
-      "targets": tf.FixedLenFeature([self.num_binary_predictions], tf.int64),
-    }
+    if self.prechunked:
+      data_fields = {
+        "index": tf.FixedLenFeature([1], tf.int64),
+        "inputs": tf.FixedLenFeature([int(np.ceil(self.input_sequence_length / self.chunk_size))],
+                         tf.int64),
+        "targets": tf.FixedLenFeature([self.num_binary_predictions], tf.int64),
+      }
+    else:
+      data_fields = {
+        "index": tf.FixedLenFeature([1], tf.int64),
+        "inputs": tf.FixedLenFeature([self.input_sequence_length], tf.int64),
+        "targets": tf.FixedLenFeature([self.num_binary_predictions], tf.int64),
+      }
     data_items_to_decoders = None
     return (data_fields, data_items_to_decoders)
   
@@ -527,10 +541,11 @@ class DeepseaProblem(problem.Problem):
     inputs = example["inputs"]
     targets = example["targets"]
     encoder = self._encoders["inputs"]
-    def to_ids(inputs):
-      ids = encoder.encode("".join(map(chr, inputs)))
-      return np.array(ids, dtype=np.int64)
-    [inputs] = tf.py_func(to_ids, [inputs], [tf.int64], stateful=False)
+    if not self.prechunked:
+      def to_ids(inputs):
+        ids = encoder.encode("".join(map(chr, inputs)))
+        return np.array(ids, dtype=np.int64)
+      [inputs] = tf.py_func(to_ids, [inputs], [tf.int64], stateful=False)
     # Reshape to the [p0, p1, channels] modality convention.
     out_size = int(np.ceil(self.input_sequence_length / self.chunk_size))
     example["inputs"] = tf.reshape(inputs, [out_size, 1, 1])
@@ -684,13 +699,18 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
 class Gm12878DeepseaProblem(TftiDeepseaProblem):
   """GM12878 Cell type specific imputation problem"""
 
+  overlap = None
+
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = super().getOverlappingIndicesForCellType('GM12878', 'H1-hESC')
-    
+    if not self.overlap:
+      gather_indices = super().getOverlappingIndicesForCellType('GM12878', 'H1-hESC')
+    else:
+      gather_indices = self.overlap    
+
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
     gather_indices_sorted = np.sort(gather_indices)
