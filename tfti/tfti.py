@@ -349,7 +349,7 @@ class DeepseaProblem(problem.Problem):
   @property
   def num_binary_predictions(self):
     """Binary predictions: DNase, TFs and histones."""
-    return 919
+    return 35
   
   @property
   def input_sequence_length(self):
@@ -440,6 +440,7 @@ class DeepseaProblem(problem.Problem):
     for i, (inputs, targets) in enumerate(generator()):
       if (i % 1000 == 0):
         tf.logging.info(f"Generated {i} examples.")
+      targets=targets[0:35]
       assert len(inputs) == self.input_sequence_length
       assert len(targets) == self.num_binary_predictions
       yield {"index": [i], #"inputs": list(map(ord, inputs)),
