@@ -753,7 +753,7 @@ class H1hescDeepseaProblem(TftiDeepseaProblem):
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = gather_indices = self.targets_gather_indices()
+    gather_indices = self.targets_gather_indices()
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
