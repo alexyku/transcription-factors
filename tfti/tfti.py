@@ -616,7 +616,7 @@ class TftiDeepseaProblem(DeepseaProblem):
     # Zero out targets for copied labels. 
     zeroed = example["targets"] * (1 - keep_mask)
     # Add self.unk_id to the zeroed out targets.
-    example["targets"] = zeroed + (keep_mask * self.unk_id)
+    example["targets"] = tf.cast(zeroed + (keep_mask * self.unk_id), tf.int64)
     return example
 
   def load_names(self, namefile):
