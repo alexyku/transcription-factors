@@ -613,10 +613,11 @@ class TftiDeepseaProblem(DeepseaProblem):
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
     example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
                                                       self.unk_id))
-    # Zero out targets for copied labels. 
+    # Zero out targets for copied labels.
+    keep_mask = tf.cast(keep_mask, tf.int64)
     zeroed = example["targets"] * (1 - keep_mask)
     # Add self.unk_id to the zeroed out targets.
-    example["targets"] = tf.cast(zeroed + (keep_mask * self.unk_id), tf.int64)
+    example["targets"] = zeroed + (keep_mask * self.unk_id)
     return example
 
   def load_names(self, namefile):
