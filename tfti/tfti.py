@@ -214,7 +214,7 @@ class BinaryClassLabelModality(modality.Modality):
       res = set_embedding(x, self._vocab_size, self._body_input_depth)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
-  def top(self, body_output, _):
+  def top(self, body_output, features):
     """Body output to logits.
 
     Args:
@@ -236,7 +236,7 @@ class BinaryClassLabelModality(modality.Modality):
       res = tf.map_fn(lambda y: tf.layers.dense(y, 1), x)
       # Reverse the transposition to get [batch_size, nlabels, 1].
       res =  tf.transpose(res, [1, 0, 2])
-      return tf.expand_dims(res, 3)  # [batch_size, nlabels, 1, 1]
+      return tf.expand_dims(res, 3), features  # [batch_size, nlabels, 1, 1]
 
   @property
   def targets_weights_fn(self):
@@ -256,11 +256,11 @@ class BinaryClassLabelModality(modality.Modality):
       return hp.pos_weight * is_pos + is_neg
     return pos_weights_fn
 
-  def loss(self, logits, targets):
+  def loss(self, top_out, targets):
     """Logits to loss.
 
     Args:
-      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      top_out: Two float Tensors with shape [batch_size, nlabels, 1, 1].
       targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
         values in (0, 1).
 
@@ -269,6 +269,16 @@ class BinaryClassLabelModality(modality.Modality):
         loss_numerator: A Tensor with shape [1].
         loss_denominator: A Tensor with shape [1].
     """
+    logits = top_out[0]
+    features = top_out[1]
+
+    frac_seen = 1.0
+    if features and "metrics_weights" in features:
+      mask = keep_first_dims(features["metrics_weights"], 2)
+      total = tf.to_float(tf.size(mask))
+      shown = tf.reduce_sum(mask)
+      frac_seen = tf.divide(shown, total) + .001
+
     logits = keep_first_dims(logits, 2)
     targets = keep_first_dims(targets, 2)
     loss = tf.losses.sigmoid_cross_entropy(
@@ -276,7 +286,7 @@ class BinaryClassLabelModality(modality.Modality):
         logits=logits,
         reduction="none")
     weights = self.loss_weights_fn(targets)
-    return tf.reduce_sum(loss * weights), tf.reduce_sum(weights)
+    return tf.reduce_sum(loss * weights), tf.reduce_sum(weights) * frac_seen
 
 
 @registry.register_class_label_modality("binary_imputation")
@@ -813,10 +823,10 @@ class TftiTransformer(transformer.Transformer):
     # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
 
   def top(self, body_output, features):
-    logits = super().top(body_output, features)
+    logits, _ = super().top(body_output, features)
     # TensorBoard summaries.
     self.tensorboard_summaries(logits, features, features["targets"])
-    return logits
+    return logits, features
   
   def body(self, features):
     """Transformer main model_fn.
