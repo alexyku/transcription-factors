@@ -314,6 +314,34 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
                  + (1.0 - mask) * self.UNK_ID)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
+  def loss(self, logits, targets):
+    """Logits to loss.
+
+    Args:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
+        values in (0, 1).
+
+    Returns:
+      A tuple containing:
+        loss_numerator: A Tensor with shape [1].
+        loss_denominator: A Tensor with shape [1].
+    """
+    logits = keep_first_dims(logits, 2)
+    targets = keep_first_dims(targets, 2)
+    # Get all values that need to be ignored in loss. 
+    loss_mask = 1 - tf.cast(tf.equal(targets, self.UNK_ID), tf.int32)
+    # Scale the loss by the number of targets that were masked.
+    scale_factor = tf.reduce_sum(loss_mask)
+     
+    loss = tf.losses.sigmoid_cross_entropy(
+        multi_class_labels=targets,
+        logits=logits,
+        reduction="none")
+    # For all self.UNK_ID values in targets, weight will be 0.
+    weights = self.loss_weights_fn(targets)
+    return tf.reduce_sum(loss * weights), tf.reduce_sum(weights) * scale_factor
+
 
 ################################################################################
 ################################## ENCODERS ####################################
@@ -575,15 +603,20 @@ class TftiDeepseaProblem(DeepseaProblem):
         common_layers.shape_list(targets)) < hparams.latent_keep_prob)
       latents = (keep_mask * tf.to_float(targets)
                  + (1.0 - keep_mask) * self.unk_id)
-    return tf.to_int32(latents)
+    return tf.to_int32(latents), keep_mask
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
-    example["latents"] = self.make_latents(example["targets"], hparams)
+    latents, keep_mask = self.make_latents(example["targets"], hparams)
+    example["latents"] = latents
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
     example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
                                                       self.unk_id))
+    # Zero out targets for copied labels. 
+    zeroed = example["targets"] * (1 - keep_mask)
+    # Add self.unk_id to the zeroed out targets.
+    example["targets"] = zeroed + (keep_mask * self.unk_id)
     return example
 
   def load_names(self, namefile):
