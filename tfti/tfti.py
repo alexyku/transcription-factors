@@ -667,6 +667,15 @@ class TftiDeepseaProblem(DeepseaProblem):
 class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
   """DeepSEA Imputation problem for transcription factors (TFs)."""
 
+  def targets_gather_indices(self):
+    """Returns indices to gather `targets`, `latents` and `metrics_weights`.
+
+    Returns:
+      A list of indices between [0, self.num_binary_predictions).
+    """
+    return np.arange(125, 815)
+
+
   def preprocess_example(self, example, mode, hparams):
     """Slices latents and targets to only include indices of TF labels.
 
@@ -680,9 +689,9 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
     See base class for method signature.
     """
     example = super().preprocess_example(example, mode, hparams)
-    example["targets"] = example["targets"][125:815]
-    example["latents"] = example["latents"][125:815]
-    example["metrics_weights"] = example["metrics_weights"][125:815]
+    gather_indices = self.targets_gather_indices()
+    for key in ["targets", "latents", "metrics_weights"]:
+      example[key] = tf.gather(example[key], gather_indices)
     return example
 
 
@@ -695,12 +704,20 @@ class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
 class Gm12878DeepseaProblem(TftiDeepseaProblem):
   """GM12878 Cell type specific imputation problem"""
 
+  def targets_gather_indices(self):
+    """Returns indices to gather `targets`, `latents` and `metrics_weights`.
+
+    Returns:
+      A list of indices between [0, self.num_binary_predictions).
+    """
+    return self.get_overlapping_indices_for_cell_type("GM12878", "H1-hESC")
+
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = self.get_overlapping_indices_for_cell_type("GM12878", "H1-hESC")
+    gather_indices = self.targets_gather_indices()
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
@@ -723,12 +740,20 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
 class H1hescDeepseaProblem(TftiDeepseaProblem):
   """H1-hESC Cell type specific imputation problem"""
 
+  def targets_gather_indices(self):
+    """Returns indices to gather `targets`, `latents` and `metrics_weights`.
+
+    Returns:
+      A list of indices between [0, self.num_binary_predictions).
+    """
+    return self.get_overlapping_indices_for_cell_type("H1-hESC", "GM12878")
+
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
-    gather_indices = self.get_overlapping_indices_for_cell_type("H1-hESC", "GM12878")
+    gather_indices = gather_indices = self.targets_gather_indices()
     
     # Argsort indices to preserve ordering.
     argsort_indices = np.argsort(gather_indices)
@@ -847,8 +872,7 @@ def tfti_transformer_base():
 @registry.register_hparams("tfti_transformer_debug")
 def tfti_transformer_debug():
   """Hparams for debugging."""
-  hparams = transformer.transformer_base()
-  hparams.add_hparam("pretrain_steps", 0)
+  hparams = tfti_transformer_base()
   hparams.batch_size = 2
   hparams.num_hidden_layers = 2
   hparams.hidden_size = 8
