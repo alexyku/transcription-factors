@@ -341,8 +341,8 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
         reduction="none")
     # For all self.UNK_ID values in targets, weight will be 0.
     weights = self.loss_weights_fn(targets)
-    return tf.reduce_sum(loss * weights) * scale_factor_n, 
-           tf.reduce_sum(weights) * scale_factor_d
+    return tf.reduce_sum(loss * weights) * scale_factor_n, \
+	   tf.reduce_sum(weights) * scale_factor_d
 
 
 ################################################################################
