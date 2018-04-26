@@ -330,10 +330,10 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
     logits = keep_first_dims(logits, 2)
     targets = keep_first_dims(targets, 2)
     # Get all values that need to be ignored in loss. 
-    loss_mask = 1 - tf.cast(tf.equal(targets, self.UNK_ID), tf.int32)
+    loss_mask = 1 - tf.cast(tf.equal(targets, self.UNK_ID), tf.float32)
     # Scale the loss by the number of targets that were masked.
     scale_factor = tf.reduce_sum(loss_mask)
-     
+ 
     loss = tf.losses.sigmoid_cross_entropy(
         multi_class_labels=targets,
         logits=logits,
@@ -580,6 +580,8 @@ class TftiDeepseaProblem(DeepseaProblem):
     """See base class."""
     super().hparams(defaults, model_hparams)
     defaults.input_modality["latents"] = (
+        "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
+    defaults.target_modality = (
         "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
 
   def make_latents(self, targets, hparams):
