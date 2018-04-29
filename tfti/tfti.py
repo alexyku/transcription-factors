@@ -228,14 +228,27 @@ class BinaryClassLabelModality(modality.Modality):
     with tf.variable_scope(self.name):
       x = body_output  # [batch_size, nlabels, 1, hidden_size]
       x = common_layers.flatten4d3d(x)
-      # Transpose to apply `tf.map_fn` along the  `nlabels` dimension.
-      # i.e., mapping along dimension 0 of [nlabels, batch_size, hidden_size].
-      x = tf.transpose(x, [1, 0, 2])
-      # Collapse `hidden_size` dimension of `x` with a dense layer
-      # to get a Tensor with shape [nlabels, batch_size, 1]
-      res = tf.map_fn(lambda y: tf.layers.dense(y, 1), x)
-      # Reverse the transposition to get [batch_size, nlabels, 1].
-      res =  tf.transpose(res, [1, 0, 2])
+      if not self._model_hparams.get("multigpu"):
+        # Transpose to apply `tf.map_fn` along the  `nlabels` dimension.
+        # i.e., mapping along dimension 0 of [nlabels, batch_size, hidden_size].
+        x = tf.transpose(x, [1, 0, 2])
+        # Collapse `hidden_size` dimension of `x` with a dense layer
+        # to get a Tensor with shape [nlabels, batch_size, 1]
+        res = tf.map_fn(lambda y: tf.layers.dense(y, 1), x)
+        # Reverse the transposition to get [batch_size, nlabels, 1].
+        res =  tf.transpose(res, [1, 0, 2])
+
+      else:
+        mask = tf.get_variable("mask",
+                                shape=common_layers.shape_list(x)[1:],
+                                dtype=tf.float32)
+        bias = tf.get_variable("bias",
+                                shape=common_layers.shape_list(x)[1],
+                                dtype=tf.float32)
+        # Take inner product of each label position with a different vector,
+        # resulting in a Tensor with shape [batch, nlabels].
+        res = tf.reduce_sum(x * mask, axis=-1) + bias
+        res = tf.expand_dims(res, -1) # [batch_size, nlabels, 1]
       return tf.expand_dims(res, 3)  # [batch_size, nlabels, 1, 1]
 
   @property
@@ -871,6 +884,7 @@ def tfti_transformer_base():
   """Hparams extends `transformer_base`."""
   hparams = transformer.transformer_base()
   hparams.batch_size = 64
+  hparams.add_hparam("multigpu", False)
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
