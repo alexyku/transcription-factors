@@ -228,7 +228,6 @@ class BinaryClassLabelModality(modality.Modality):
     with tf.variable_scope(self.name):
       x = body_output  # [batch_size, nlabels, 1, hidden_size]
       x = common_layers.flatten4d3d(x)
-      print(self._model_hparams.get("multigpu"))
       if not self._model_hparams.get("multigpu"):
         # Transpose to apply `tf.map_fn` along the  `nlabels` dimension.
         # i.e., mapping along dimension 0 of [nlabels, batch_size, hidden_size].
