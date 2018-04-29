@@ -57,7 +57,7 @@ t2t-datagen \
 t2t-trainer \
   --t2t_usr_dir=$USR_DIR \
   --data_dir=$DATA_DIR \
-  --problems=$PROBLEM \
+  --problem=$PROBLEM \
   --model=$MODEL \
   --hparams_set=$HPARAMS_SET \
   --hparams=$HPARAMS \
@@ -67,7 +67,7 @@ t2t-trainer \
 For debugging on dummy data:
 
 ```
-PROBLEM=genomics_binding_deepsea_helas3
+PROBLEM=genomics_binding_deepsea_gm12878
 MODEL=tfti_transformer
 HPARAMS_SET=tfti_transformer_debug
 HPARAMS=''
@@ -82,7 +82,7 @@ mkdir -p $DATA_DIR $TRAIN_DIR
 t2t-trainer \
   --t2t_usr_dir=$USR_DIR \
   --data_dir=$DATA_DIR \
-  --problems=$PROBLEM \
+  --problem=$PROBLEM \
   --model=$MODEL \
   --hparams_set=$HPARAMS_SET \
   --output_dir=$TRAIN_DIR \
