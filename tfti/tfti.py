@@ -507,7 +507,7 @@ class DeepseaProblem(problem.Problem):
       tf.contrib.slim.tfexample_decoder.
     """
     data_fields = {
-      "index": tf.FixedLenFeature([1], tf.int64),
+      "index": tf.FixedLenFeature([], tf.int64),
       "inputs": tf.FixedLenFeature([self.input_sequence_length], tf.int64),
       "targets": tf.FixedLenFeature([self.num_binary_predictions], tf.int64),
     }
@@ -554,11 +554,11 @@ class TftiDeepseaProblem(DeepseaProblem):
     defaults.input_modality["latents"] = (
         "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
 
-  def make_latents(self, targets, hparams):
+  def make_latents(self, features, hparams):
     """Generates a partially observed latent target tensor to be imputed.
 
     Args:
-      targets: An int Tensor with values in (0, 1).
+      features: Feature dict mapping keys to Tensors.
       hparams: The problem hparams.
 
     Returns:
@@ -566,40 +566,47 @@ class TftiDeepseaProblem(DeepseaProblem):
         ID to be imputed by the model. The unknown ID is specified by:
           BinaryImputationClassLabelModality.UNK_ID
     """
-    if not hparams.get("latent_keep_prob"):
-      # Sets everything to the unknown ID by default.
-      latents = tf.ones(common_layers.shape_list(targets)) * self.unk_id
+    targets = features["targets"]
+    targets_shape = common_layers.shape_list(targets)
+    if "latent_keep_mask" in features:
+      tf.logging.info("Generating latents with a `latent_keep_mask`.")
+      # Keep mask must be the same shape as targets. 
+      keep_mask = tf.reshape(features["latent_keep_mask"], targets_shape)
     else:
-      # Latent dropout is the probability of keeping a ground-truth label.
-      keep_mask = tf.to_float(tf.random_uniform(
-        common_layers.shape_list(targets)) < hparams.latent_keep_prob)
-      latents = (keep_mask * tf.to_float(targets)
-                 + (1.0 - keep_mask) * self.unk_id)
-    return tf.to_int32(latents)
+      # The latent_keep_prob is the probability of keeping a ground-truth label.
+      keep_prob = hparams.get("latent_keep_prob", 0.0)
+      tf.logging.info(f"Generating latents with a `keep_prob` of {keep_prob}")
+      keep_mask = tf.random_uniform(targets_shape) < keep_prob
+    # Use the keep_mask to create latents.
+    keep_mask = tf.to_float(keep_mask)
+    return tf.to_int32(keep_mask * tf.to_float(targets)
+                       + (1.0 - keep_mask) * self.unk_id)
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
-    example["latents"] = self.make_latents(example["targets"], hparams)
+    example["latents"] = self.make_latents(example, hparams)
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
-    example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
-                                                      self.unk_id))
+    example["metrics_weights"] = tf.to_float(
+        tf.equal(example["latents"], self.unk_id))
     return example
 
   def load_names(self, namefile):
-    """
-    Loads DeepSEA label names from namefile.
+    """Loads DeepSEA label names from namefile.
     """
     return np.array(open(namefile).read().split(","))
 
   def get_overlapping_indices_for_cell_type(self, cell_type_1, cell_type_2):
-    """
-    Gets target indices for transcription factors for the intersection 
+    """Gets target indices for transcription factors for the intersection 
     of cell_type_1 and cell_type_2.
 
     Args:
-      cell_type_1: Name of cell type 1 as a string
-      cell_type_2: Name of cell type 2 as a string
+      cell_type_1: Name of cell type 1 as a string.
+      cell_type_2: Name of cell type 2 as a string.
+
+    Returns:
+      List of indices ~ FOR CELL 1 ~ that overlap with cell 2.
+      These indices are listed in alphabetical order for consistency.
     """
     
     dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -656,7 +663,8 @@ class TftiDeepseaProblem(DeepseaProblem):
 
     # Verify that TFs match between cell types.
     for i, item in enumerate(cell_type_2_items):
-      assert(cell_type_2_items[i][1].split("|")[1] == cell_type_1_items[i][1].split("|")[1])
+      assert(cell_type_2_items[i][1].split("|")[1] ==
+             cell_type_1_items[i][1].split("|")[1])
 
     # These are the indices we are using for the cell type 1 model.
     cell_type_1_indices = list(map(lambda x: x[0], cell_type_1_items))
@@ -802,15 +810,15 @@ class TftiTransformer(transformer.Transformer):
     Returns:
       None.
     """
-    weighted_auroc = tf.multiply(*average_auroc(logits, labels, features))
-    weighted_auprc = tf.multiply(*average_auprc(logits, labels, features))
-    tf.summary.scalar("metrics/average_auroc", weighted_auroc)
-    tf.summary.scalar("metrics/average_auprc", weighted_auprc)
-
-    # Logging AUC metrics for individual labels.
-    # TODO(alexyku): can we display multple curves on the same plot?
-    # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
-    # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
+    if not tf.contrib.eager.in_eager_mode():
+      weighted_auroc = tf.multiply(*average_auroc(logits, labels, features))
+      weighted_auprc = tf.multiply(*average_auprc(logits, labels, features))
+      tf.summary.scalar("metrics/average_auroc", weighted_auroc)
+      tf.summary.scalar("metrics/average_auprc", weighted_auprc)
+      # Logging AUC metrics for individual labels.
+      # TODO(alexyku): can we display multple curves on the same plot?
+      # tf.summary.scalars("metrics/set_auroc", set_auroc(logits, targets))
+      # tf.summary.scalars("metrics/set_auprc", set_auprc(logits, targets))
 
   def top(self, body_output, features):
     logits = super().top(body_output, features)
