@@ -623,14 +623,6 @@ class TftiDeepseaProblem(DeepseaProblem):
       # Keep mask must be the same shape as targets. 
       keep_mask = tf.reshape(features["latent_keep_mask"], targets_shape)
     else:
-<<<<<<< HEAD
-      # Latent dropout is the probability of keeping a ground-truth label.
-      keep_mask = tf.to_float(tf.random_uniform(
-        common_layers.shape_list(targets)) < hparams.latent_keep_prob)
-      latents = (keep_mask * tf.to_float(targets)
-                 + (1.0 - keep_mask) * self.unk_id)
-    return tf.to_int32(latents), keep_mask
-=======
       # The latent_keep_prob is the probability of keeping a ground-truth label.
       keep_prob = hparams.get("latent_keep_prob", 0.0)
       tf.logging.info(f"Generating latents with a `keep_prob` of {keep_prob}")
@@ -639,7 +631,6 @@ class TftiDeepseaProblem(DeepseaProblem):
     keep_mask = tf.to_float(keep_mask)
     return tf.to_int32(keep_mask * tf.to_float(targets)
                        + (1.0 - keep_mask) * self.unk_id)
->>>>>>> cbde57a495716219842f6f726be1f13b6481eb06
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
