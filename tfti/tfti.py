@@ -329,12 +329,17 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
     """
     logits = keep_first_dims(logits, 2)
     targets = keep_first_dims(targets, 2)
-    # Get all values that need to be ignored in loss. 
-    loss_mask = 1 - tf.cast(tf.equal(targets, self.UNK_ID), tf.float32)
-    # Scale the loss by the number of targets that were masked.
-    scale_factor_n = tf.to_float(tf.size(loss_mask))
-    scale_factor_d = tf.to_float(tf.reduce_sum(loss_mask))
- 
+
+    if self._model_hparams.scaled_loss:
+      # Get all values that need to be ignored in loss. 
+      loss_mask = 1 - tf.cast(tf.equal(targets, self.UNK_ID), tf.float32)
+      # Scale the loss by the number of targets that were masked.
+      scale_factor_n = tf.to_float(tf.size(loss_mask))
+      scale_factor_d = tf.to_float(tf.reduce_sum(loss_mask))
+    else:
+      scale_factor_n = 1
+      scale_factor_d = 1
+
     loss = tf.losses.sigmoid_cross_entropy(
         multi_class_labels=targets,
         logits=logits,
@@ -342,7 +347,7 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
     # For all self.UNK_ID values in targets, weight will be 0.
     weights = self.loss_weights_fn(targets)
     return tf.reduce_sum(loss * weights) * scale_factor_n, \
-	   tf.reduce_sum(weights) * scale_factor_d
+      tf.reduce_sum(weights) * scale_factor_d
 
 
 ################################################################################
@@ -612,16 +617,19 @@ class TftiDeepseaProblem(DeepseaProblem):
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
+    
+    # The keep_mask is ignored if scaled_loss = False.
     latents, keep_mask = self.make_latents(example["targets"], hparams)
     example["latents"] = latents
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
     example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
                                                       self.unk_id))
-    # Zero out targets for copied labels.
-    keep_mask = tf.cast(keep_mask, tf.int64)
-    zeroed = example["targets"] * (1 - keep_mask)
-    # Add self.unk_id to the zeroed out targets.
-    example["targets"] = zeroed + (keep_mask * self.unk_id)
+    if hparams.scaled_loss:
+      # Zero out targets for copied labels.
+      keep_mask = tf.cast(keep_mask, tf.int64)
+      zeroed = example["targets"] * (1 - keep_mask)
+      # Add self.unk_id to the zeroed out targets.
+      example["targets"] = zeroed + (keep_mask * self.unk_id)
     return example
 
   def load_names(self, namefile):
@@ -904,6 +912,7 @@ def tfti_transformer_base():
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
+  hparams.add_hparam("scaled_loss", 0.0)
   return hparams
 
 
