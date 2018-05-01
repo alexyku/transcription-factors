@@ -550,15 +550,6 @@ class DeepseaProblem(problem.Problem):
     example["inputs"] = tf.reshape(inputs, [out_size, 1, 1])
     example["targets"] = tf.reshape(
         targets, [self.num_binary_predictions, 1, 1])
-    # If an explicit keepmask is fed in, use that instead.
-    if hparams.latent_keep_mask != "":
-      tf.logging.info(f"Using `latent_keep_mask`: {hparams.latent_keep_mask}")
-      assert(all(x in {'0', '1'} for x in set(hparams.latent_keep_mask)))
-      assert(len(hparams.latent_keep_mask) == self.num_binary_predictions)
-      keep_mask = np.array(
-          list(map(int, hparams.latent_keep_mask)), dtype=np.bool)
-      example["latent_keep_mask"] = tf.reshape(
-        keep_mask, [self.num_binary_predictions, 1, 1])
     return example
 
 
@@ -604,13 +595,37 @@ class TftiDeepseaProblem(DeepseaProblem):
     return tf.to_int32(keep_mask * tf.to_float(targets)
                        + (1.0 - keep_mask) * self.unk_id)
 
-  def preprocess_example(self, example, mode, hparams):
+  def preprocess_example(self, example, mode, hparams, cell_type_1=None, cell_type_2=None):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
     example["latents"] = self.make_latents(example, hparams)
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
     example["metrics_weights"] = tf.to_float(
         tf.equal(example["latents"], self.unk_id))
+    
+    # If an explicit keepmask is fed in, use that instead.
+    if hparams.latent_keep_mask != "":
+      tf.logging.info(f"Using `latent_keep_mask`: {hparams.latent_keep_mask}")
+    
+      _, indices_marks = self.get_overlapping_indices_for_cell_type(cell_type_1, cell_type_2)
+      marks = list(map(lambda x: x[1].split('|')[1], indices_marks))
+    
+      hparams.latent_keep_mask = hparams.latent_keep_mask.split('/')
+                                                            
+      assert(all(x in marks for x in set(hparams.latent_keep_mask)))
+      assert(len(hparams.latent_keep_mask) <= len(marks))
+    
+      filtered_indices = [x[0] for x in indices_marks if x[1].split('|')[1] in
+                            hparams.latent_keep_mask]
+    
+      tf.logging.info(filtered_indices)                         
+      
+      keep_mask = np.zeros(self.num_binary_predictions)
+      keep_mask[filtered_indices] = 1
+      keep_mask = np.array(keep_mask, dtype=np.bool)             
+      example["latent_keep_mask"] = tf.reshape(
+        keep_mask, [self.num_binary_predictions, 1, 1])
+                                                            
     return example
 
   def load_names(self, namefile):
@@ -690,7 +705,7 @@ class TftiDeepseaProblem(DeepseaProblem):
 
     # These are the indices we are using for the cell type 1 model.
     cell_type_1_indices = list(map(lambda x: x[0], cell_type_1_items))
-    return cell_type_1_indices
+    return cell_type_1_indices, cell_type_1_items
 
 
 @registry.register_problem("genomics_binding_deepsea_tf")
@@ -740,10 +755,10 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
     Returns:
       A list of indices between [0, self.num_binary_predictions).
     """
-    return self.get_overlapping_indices_for_cell_type("GM12878", "H1-hESC")
+    return self.get_overlapping_indices_for_cell_type("GM12878", "H1-hESC")[0]
 
   def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
+    example = super().preprocess_example(example, mode, hparams, "GM12878", "H1-hESC")
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
     
@@ -754,42 +769,6 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
     gather_indices_sorted = np.sort(gather_indices)
 
     # Keep targets and latents corresponding to GM12878 (LCL cell line).
-    targets = tf.gather(example["targets"], gather_indices_sorted)
-    latents = tf.gather(example["latents"], gather_indices_sorted)
-    metrics_weights = tf.gather(example["metrics_weights"],
-                                gather_indices_sorted)
-    
-    # Ensure sure tensors are sorted by alphabetical TFs.
-    example["targets"] = tf.gather(targets, argsort_indices)
-    example["latents"] = tf.gather(latents, argsort_indices)
-    example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
-    return example
-
-
-@registry.register_problem("genomics_binding_deepsea_h1hesc")
-class H1hescDeepseaProblem(TftiDeepseaProblem):
-  """H1-hESC Cell type specific imputation problem"""
-
-  def targets_gather_indices(self):
-    """Returns indices to gather `targets`, `latents` and `metrics_weights`.
-
-    Returns:
-      A list of indices between [0, self.num_binary_predictions).
-    """
-    return self.get_overlapping_indices_for_cell_type("H1-hESC", "GM12878")
-
-  def preprocess_example(self, example, mode, hparams):
-    example = super().preprocess_example(example, mode, hparams)
-    # Indices for TF labels specific to GM12878 cell type.
-    # These are ordered so TFs are alphabetical
-    
-    gather_indices = self.targets_gather_indices()
-    
-    # Argsort indices to preserve ordering.
-    argsort_indices = np.argsort(gather_indices)
-    gather_indices_sorted = np.sort(gather_indices)
-
-    # Keep targets and latents corresponding to H1-hESC.
     targets = tf.gather(example["targets"], gather_indices_sorted)
     latents = tf.gather(example["latents"], gather_indices_sorted)
     metrics_weights = tf.gather(example["metrics_weights"],
