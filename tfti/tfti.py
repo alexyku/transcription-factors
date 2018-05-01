@@ -550,6 +550,15 @@ class DeepseaProblem(problem.Problem):
     example["inputs"] = tf.reshape(inputs, [out_size, 1, 1])
     example["targets"] = tf.reshape(
         targets, [self.num_binary_predictions, 1, 1])
+    # If an explicit keepmask is fed in, use that instead.
+    if hparams.latent_keep_mask != "":
+      tf.logging.info(f"Using `latent_keep_mask`: {hparams.latent_keep_mask}")
+      assert(all(x in {'0', '1'} for x in set(hparams.latent_keep_mask)))
+      assert(len(hparams.latent_keep_mask) == self.num_binary_predictions)
+      keep_mask = np.array(
+          list(map(int, hparams.latent_keep_mask)), dtype=np.bool)
+      example["latent_keep_mask"] = tf.reshape(
+        keep_mask, [self.num_binary_predictions, 1, 1])
     return example
 
 
@@ -888,6 +897,7 @@ def tfti_transformer_base():
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
+  hparams.add_hparam("latent_keep_mask", "")
   return hparams
 
 
