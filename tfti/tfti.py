@@ -683,6 +683,127 @@ class TftiDeepseaProblem(DeepseaProblem):
     cell_type_1_indices = list(map(lambda x: x[0], cell_type_1_items))
     return cell_type_1_indices
 
+@registry.register_problem("genomics_binding_deepsea_multicell")
+class TftiMulticellProblem(TftiDeepseaProblem):
+  """Imputation problem accross multiple cell types"""
+
+  @property
+  def cell_types(self):
+    return ['HeLa-S3', 'GM12878', 'H1-hESC', 'HepG2', 'K562']
+
+  def get_overlapping_indices_multicell(self):
+    """Gets target indices for transcription factors for the intersection 
+    of call cell types.
+
+    Returns:
+      Dict of lists of indices in each cell of the intersection of all cells.
+      These indices are listed in alphabetical order for consistency.
+    """
+    
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    namefile = dir_path + "/deepsea_label_names.txt"
+    names = self.load_names(namefile)
+    
+    valid_cell_types = list(map(lambda x: x.split("|")[1], names))
+    
+    # Make sure cell type parameters can be found in our data. 
+    for cell_type in self.cell_types:
+      assert(cell_type in valid_cell_types,
+       f"{cell_type} not in list of valid cell types")
+        
+    # Get positions for all cell lines.
+    # {cell: [(index, full mark name)]}
+    position_dict = {cell_type: [(i, j) for i, j in enumerate(names)
+                        if cell_type in j] for cell_type in self.cell_types}
+
+    # Get marks for each cell type, to find intersection.
+    # {cell: mark type}
+    mark_dict = {cell_type: 
+                    [i[1].split("|")[1] for i in position_dict[cell_type]]
+                  for cell_type in self.cell_types}
+
+    # Get overlapping marks between all cell types.    
+    overlapping_marks = list(set().union(*mark_dict.values()))
+
+    # Filter out non-overlapping marks.
+    # {cell: [(index, full mark name)]}
+    final_position_dict = {cell_type: [(i,j) for i, j in 
+                                        position_dict[cell_type] if
+                                        j.split("|")[1] in overlapping_marks]
+                                      for cell_type in self.cell_types}
+
+    # Filter out duplicates for all cell types.
+    # {cell: [(index, full mark name)]}
+    cell_items_dict = {}
+    for cell_type in self.cell_types:
+      cell_type_items = []
+      seen = set()
+      for item in final_position_dict[cell_type]:
+        if item[1] not in seen:
+          seen.add(item[1])
+          cell_type_items.append(item)
+
+      cell_items_dict[cell_type] = sorted(cell_type_items, key=lambda i: i[1]) 
+    
+      # Print out sorted marks.
+      tf.logging.info("Marks for CellType %s: %s" 
+                      % (cell_type, 
+                      cell_items_dict[cell_type]))
+
+
+    # Verify that TFs match between cell types.
+    for cell_type_1 in cell_types:
+      for cell_type_2 in cell_types:
+        for i, _ in enumerate(cell_items_dict[cell_type]):
+          assert(cell_items_dict[cell_type_1][i][1].split("|")[1] ==
+                 cell_items_dict[cell_type_2][i][1].split("|")[1])
+
+    # These are the indices we are using for the cell type 1 model.
+    cell_indices = {cell_type: list(map(lambda x:
+                     x[0], cell_items_dict[cell_type]))
+                     for cell_type in cell_types}
+    return cell_indices
+
+  def preprocess_example(self, example, mode, hparams):
+    """Slices latents and targets to only include indices of TF labels.
+
+    Indices come from:
+    (media.nature.com/original/nature-assets/nmeth/journal/v12/n10/extref/
+        nmeth.3547-S3.xlsx)
+
+    They include all TF rows (between 128 to 817). Specifically, the index is
+    the row number in the spreadsheet - 3.
+
+    See base class for method signature.
+    """
+    example = super().preprocess_example(example, mode, hparams)
+    gather_indices = self.get_overlapping_indices_multicell()
+    examples = []
+    for cell_type in self.cell_types:
+      for key in ["targets", "latents", "metrics_weights"]:
+        example[key] = tf.gather(example[key], gather_indices[cell_type])
+      examples += [example]
+
+    dataset = tf.data.Dataset.from_generator((i for i in examples))
+    return dataset
+
+  def preprocess(self, dataset, mode, hparams):
+    """Repeats the dataset 10 times if in evaluation mode. 
+
+    Args:
+      dataset: the Dataset of already decoded but not yet preprocessed features.
+      mode: tf.estimator.ModeKeys
+      hparams: HParams, model hyperparameters
+
+    Returns:
+      a Dataset
+    """
+    dataset = super().preprocess(dataset, mode, hparams)
+    if mode == tf.estimator.ModeKeys.EVAL:
+      dataset = dataset.repeat(count=10)
+    return dataset
+
+
 
 @registry.register_problem("genomics_binding_deepsea_tf")
 class TranscriptionFactorDeepseaProblem(TftiDeepseaProblem):
