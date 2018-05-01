@@ -630,14 +630,14 @@ class TftiDeepseaProblem(DeepseaProblem):
     # Use the keep_mask to create latents.
     keep_mask = tf.to_float(keep_mask)
     return tf.to_int32(keep_mask * tf.to_float(targets)
-                       + (1.0 - keep_mask) * self.unk_id)
+                       + (1.0 - keep_mask) * self.unk_id), keep_mask
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
     
     # The keep_mask is ignored if scaled_loss = False.
-    latents, keep_mask = self.make_latents(example["targets"], hparams)
+    latents, keep_mask = self.make_latents(example, hparams)
     example["latents"] = latents
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
     example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
@@ -934,7 +934,7 @@ def tfti_transformer_base():
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
-  hparams.add_hparam("scaled_loss", 0.0)
+  hparams.add_hparam("scaled_loss", True)
   return hparams
 
 
