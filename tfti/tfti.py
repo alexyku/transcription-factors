@@ -397,7 +397,7 @@ class DeepseaProblem(problem.Problem):
   def feature_encoders(self, data_dir):
     del data_dir
     return {
-        "inputs": dna_encoder.DNAEncoder(self.chunk_size),
+        "inputs": text_encoder.ByteTextEncoder(num_reserved_ids=0),
         "targets": BinaryClassLabelEncoder(),
     }
   
@@ -507,7 +507,7 @@ class DeepseaProblem(problem.Problem):
       None.
     """
     p = defaults
-    vocab_size = self._encoders["inputs"].vocab_size
+    vocab_size = dna_encoder.DNAEncoder(self.chunk_size).vocab_size
     p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)}
     p.target_modality = ("%s:binary" % registry.Modalities.CLASS_LABEL, None)
     p.input_space_id = problem.SpaceID.DNA
@@ -540,7 +540,7 @@ class DeepseaProblem(problem.Problem):
     """
     inputs = example["inputs"]
     targets = example["targets"]
-    encoder = self._encoders["inputs"]
+    encoder = dna_encoder.DNAEncoder(self.chunk_size)
     def to_ids(inputs):
       ids = encoder.encode("".join(map(chr, inputs)))
       return np.array(ids, dtype=np.int64)
