@@ -799,7 +799,11 @@ class TftiMulticellProblem(TftiDeepseaProblem):
 
   @property
   def cell_types(self):
-    return ['HeLa-S3', 'GM12878', 'H1-hESC', 'HepG2', 'K562']
+    return ['HeLa-S3', 'GM12878', 'HepG2', 'K562','H1-hESC']
+
+  @property
+  def test_cell_type(self):
+    return self.cell_types[-1]
 
   def get_overlapping_indices_multicell(self):
     """Gets target indices for transcription factors for the intersection 
@@ -820,7 +824,7 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     for cell_type in self.cell_types:
       assert(cell_type in valid_cell_types,
        f"{cell_type} not in list of valid cell types")
-        
+    
     # Get positions for all cell lines.
     # {cell: [(index, full mark name)]}
     position_dict = {cell_type: [(i, j) for i, j in enumerate(names)
@@ -854,13 +858,6 @@ class TftiMulticellProblem(TftiDeepseaProblem):
           cell_type_items.append(item)
 
       cell_items_dict[cell_type] = sorted(cell_type_items, key=lambda i: i[1]) 
-    
-      # Print out sorted marks.
-      tf.logging.info("%s marks for CellType %s: %s" 
-                      % (len(cell_items_dict[cell_type]),
-                      cell_type, 
-                      cell_items_dict[cell_type]))
-
 
     # Verify that TFs match between cell types.
     for cell_type_1 in self.cell_types:
@@ -874,24 +871,70 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     cell_indices = {cell_type: list(map(lambda x:
                      x[0], cell_items_dict[cell_type]))
                      for cell_type in self.cell_types}
-    return cell_indices
+
+    valid_tfs = sorted(list(map(lambda x: x[1].split('|')[1],
+                                cell_items_dict[self.cell_types[0]])))
+
+    tf.logging.info("Selected marks for cell types %s: %s" % (self.cell_types, valid_tfs))
+
+    return cell_indices, valid_tfs
 
   def preprocess_example(self, example, mode, hparams):
     """Makes one example for each cell type, including only intersecting marks.
 
     See base class for method signature.
     """
-    example = super().preprocess_example(example, mode, hparams)
-    gather_indices = self.get_overlapping_indices_multicell()
-    examples = []
+
+    base_example = super().preprocess_example(example, mode, hparams)
+
+    gather_indices, _ = self.get_overlapping_indices_multicell()
+
+    # get number of targets
+    num_binary_predictions = len(list(gather_indices.values())[0])
 
     def gen():
       for cell_type in self.cell_types:
-        for key in ["targets", "latents", "metrics_weights"]:
-          example[key] = tf.gather(example[key], gather_indices[cell_type])
-        yield example
+        if cell_type != self.test_cell_type:
+          # Argsort indices to preserve ordering.
+          argsort_indices = np.argsort(gather_indices[cell_type])
+          gather_indices_sorted = np.sort(gather_indices[cell_type])
 
-    dataset = tf.data.Dataset.from_generator(gen, (tf.int64, tf.int64, tf.int64))
+          example = base_example.copy()
+
+          for key in ["targets", "latents", "metrics_weights"]:
+            # Keep targets and latents corresponding to cell_type.
+            example_key = tf.gather(example[key], gather_indices_sorted)
+            # Ensure sure tensors are sorted by alphabetical TFs.
+            example[key] = tf.gather(example_key, argsort_indices)
+          yield example
+    
+    out_size = int(np.ceil(self.input_sequence_length / self.chunk_size))
+
+    types = {"index": tf.int64, 
+                 "inputs": tf.int64, 
+                 "targets": tf.int64, 
+                 "batch_prediction_key": tf.int64,
+                 "latents": tf.int32, 
+                 "metrics_weights": tf.float32}
+    shapes = {"index": tf.TensorShape([]), 
+                  "inputs": tf.TensorShape([out_size, 1, 1]), 
+                  "targets": tf.TensorShape([num_binary_predictions, 1, 1]), 
+                  "batch_prediction_key": tf.TensorShape([1,]),
+                  "latents": tf.TensorShape([num_binary_predictions, 1, 1]), 
+                  "metrics_weights": tf.TensorShape([num_binary_predictions, 1, 1])}
+
+    dataset = tf.data.Dataset.from_generator(gen, types, shapes)
+
+    """
+    dataset = None
+    for cell_type in self.cell_types:
+      for key in ["targets", "latents", "metrics_weights"]:
+        example[key] = tf.gather(example[key], gather_indices[cell_type])
+      if not dataset:
+        dataset = tf.data.Dataset.from_tensors(example)
+      else:
+        dataset = dataset.concatenate(tf.data.Dataset.from_tensors(example))
+    """
     return dataset
 
 
