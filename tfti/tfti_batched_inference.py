@@ -175,8 +175,6 @@ def get_inference_fn(config):
     def inference_fn(example_batch):
       """Makes a forward pass through the network.
 
-      TODO: make this pipeline implement batching.
-
       Args:
         example_batch: The output of preprocess_batch_fn.
 
