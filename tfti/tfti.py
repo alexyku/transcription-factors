@@ -601,8 +601,9 @@ class TftiDeepseaProblem(DeepseaProblem):
     super().hparams(defaults, model_hparams)
     defaults.input_modality["latents"] = (
         "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
-    defaults.target_modality = (
-        "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
+    if model_hparams.scaled_loss:
+      defaults.target_modality = (
+          "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
 
   def make_latents(self, features, hparams):
     """Generates a partially observed latent target tensor to be imputed.
