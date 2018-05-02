@@ -627,27 +627,38 @@ class TftiDeepseaProblem(DeepseaProblem):
       keep_prob = hparams.get("latent_keep_prob", 0.0)
       tf.logging.info(f"Generating latents with a `keep_prob` of {keep_prob}")
       keep_mask = tf.random_uniform(targets_shape) < keep_prob
+
     # Use the keep_mask to create latents.
     keep_mask = tf.to_float(keep_mask)
-    return tf.to_int32(keep_mask * tf.to_float(targets)
+    if hparams.get("scaled_loss"):
+      return tf.to_int32(keep_mask * tf.to_float(targets)
                        + (1.0 - keep_mask) * self.unk_id), keep_mask
+
+    # Don't need to return the mask when not using scaled loss.
+    return tf.to_int32(keep_mask * tf.to_float(targets)
+                       + (1.0 - keep_mask) * self.unk_id)
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
     
     # The keep_mask is ignored if scaled_loss = False.
-    latents, keep_mask = self.make_latents(example, hparams)
-    example["latents"] = latents
-    # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
-    example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
-                                                      self.unk_id))
+    latents = self.make_latents(example, hparams)
+
     if hparams.scaled_loss:
+      # When using scaled loss, make_latents() returns two values.
+      # Unpack both values.
+      latents, keep_mask = latents
       # Zero out targets for copied labels.
       keep_mask = tf.cast(keep_mask, tf.int64)
       zeroed = example["targets"] * (1 - keep_mask)
       # Add self.unk_id to the zeroed out targets.
       example["targets"] = zeroed + (keep_mask * self.unk_id)
+
+    example["latents"] = latents
+    # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
+    example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
+                                                      self.unk_id))
     return example
 
   def load_names(self, namefile):
