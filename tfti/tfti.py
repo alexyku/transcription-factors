@@ -934,7 +934,7 @@ def tfti_transformer_base():
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
-  hparams.add_hparam("scaled_loss", True)
+  hparams.add_hparam("scaled_loss", False)
   return hparams
 
 
