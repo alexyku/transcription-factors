@@ -327,6 +327,41 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
                  + (1.0 - mask) * self.UNK_ID)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
 
+  def loss(self, logits, targets):
+    """Logits to loss.
+
+    Args:
+      logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
+      targets: An int Tensor with shape [batch_size, nlabels, 1, 1] that takes
+        values in (0, 1).
+
+    Returns:
+      A tuple containing:
+        loss_numerator: A Tensor with shape [1].
+        loss_denominator: A Tensor with shape [1].
+    """
+    logits = keep_first_dims(logits, 2)
+    targets = keep_first_dims(targets, 2)
+
+    if self._model_hparams.scaled_loss:
+      # Get all values that need to be ignored in loss. 
+      loss_mask = 1 - tf.cast(tf.equal(targets, self.UNK_ID), tf.float32)
+      # Scale the loss by the number of targets that were masked.
+      scale_factor_n = tf.to_float(tf.size(loss_mask))
+      scale_factor_d = tf.to_float(tf.reduce_sum(loss_mask))
+    else:
+      scale_factor_n = 1
+      scale_factor_d = 1
+
+    loss = tf.losses.sigmoid_cross_entropy(
+        multi_class_labels=targets,
+        logits=logits,
+        reduction="none")
+    # For all self.UNK_ID values in targets, weight will be 0.
+    weights = self.loss_weights_fn(targets)
+    return tf.reduce_sum(loss * weights) * scale_factor_n, \
+      tf.reduce_sum(weights) * scale_factor_d
+
 
 ################################################################################
 ################################## ENCODERS ####################################
@@ -566,6 +601,9 @@ class TftiDeepseaProblem(DeepseaProblem):
     super().hparams(defaults, model_hparams)
     defaults.input_modality["latents"] = (
         "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
+    if model_hparams.scaled_loss:
+      defaults.target_modality = (
+          "%s:binary_imputation" % registry.Modalities.CLASS_LABEL, None)
 
   def make_latents(self, features, hparams):
     """Generates a partially observed latent target tensor to be imputed.
@@ -593,15 +631,24 @@ class TftiDeepseaProblem(DeepseaProblem):
     # Use the keep_mask to create latents.
     keep_mask = tf.to_float(keep_mask)
     return tf.to_int32(keep_mask * tf.to_float(targets)
-                       + (1.0 - keep_mask) * self.unk_id)
+                       + (1.0 - keep_mask) * self.unk_id), keep_mask
 
   def preprocess_example(self, example, mode, hparams):
     """See base class."""
     example = super().preprocess_example(example, mode, hparams)
-    example["latents"] = self.make_latents(example, hparams)
+    
+    # The keep_mask is ignored if scaled_loss = False.
+    latents, keep_mask = self.make_latents(example, hparams)
+    example["latents"] = latents
     # Only aggregate metrics (e.g., AUROC, AUPRC) for imputed labels.
-    example["metrics_weights"] = tf.to_float(
-        tf.equal(example["latents"], self.unk_id))
+    example["metrics_weights"] = tf.to_float(tf.equal(example["latents"],
+                                                      self.unk_id))
+    if hparams.scaled_loss:
+      # Zero out targets for copied labels.
+      keep_mask = tf.cast(keep_mask, tf.int64)
+      zeroed = example["targets"] * (1 - keep_mask)
+      # Add self.unk_id to the zeroed out targets.
+      example["targets"] = zeroed + (keep_mask * self.unk_id)
     return example
 
   def load_names(self, namefile):
@@ -1009,6 +1056,7 @@ def tfti_transformer_base():
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
+  hparams.add_hparam("scaled_loss", False)
   return hparams
 
 
