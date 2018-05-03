@@ -383,6 +383,8 @@ class DeepseaProblem(problem.Problem):
     dataset = super().preprocess(dataset, mode, hparams)
     if mode == tf.estimator.ModeKeys.EVAL:
       dataset = dataset.repeat(count=10)
+    if hparams.get("filter_negatives"):
+      dataset = dataset.filter(lambda ex: tf.reduce_any(tf.equal(ex["targets"], tf.constant(1, dtype=tf.int64))))
     return dataset
 
   def eval_metrics(self):
@@ -818,23 +820,25 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     namefile = dir_path + "/deepsea_label_names.txt"
     names = self.load_names(namefile)
     
-    valid_cell_types = list(map(lambda x: x.split("|")[1], names))
-    
+    valid_cell_types = list(map(lambda x: x.split("|")[0], names))
+    print(valid_cell_types)
+ 
     # Make sure cell type parameters can be found in our data. 
     for cell_type in self.cell_types:
       assert(cell_type in valid_cell_types,
        f"{cell_type} not in list of valid cell types")
     
-    # Get positions for all cell lines.
+    # Get positions for all cell lines and untreated assays.
     # {cell: [(index, full mark name)]}
     position_dict = {cell_type: [(i, j) for i, j in enumerate(names)
-                        if cell_type in j] for cell_type in self.cell_types}
+                         if cell_type in j and j.split("|")[2] == "None"]
+                         for cell_type in self.cell_types}
 
     # Get marks for each cell type, to find intersection.
     # {cell: mark type}
     mark_dict = {cell_type: 
-                    [i[1].split("|")[1] for i in position_dict[cell_type]]
-                  for cell_type in self.cell_types}
+                     [i[1].split("|")[1] for i in position_dict[cell_type]]
+                     for cell_type in self.cell_types}
 
     # Get overlapping marks between all cell types.    
     overlapping_marks = list(set.intersection(*[set(i) for i in mark_dict.values()]))
@@ -844,7 +848,7 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     final_position_dict = {cell_type: [(i,j) for i, j in 
                                         position_dict[cell_type] if
                                         j.split("|")[1] in overlapping_marks]
-                                      for cell_type in self.cell_types}
+                                        for cell_type in self.cell_types}
 
     # Filter out duplicates for all cell types.
     # {cell: [(index, full mark name)]}
@@ -889,52 +893,31 @@ class TftiMulticellProblem(TftiDeepseaProblem):
 
     gather_indices, _ = self.get_overlapping_indices_multicell()
 
-    # get number of targets
-    num_binary_predictions = len(list(gather_indices.values())[0])
-
-    def gen():
-      for cell_type in self.cell_types:
-        if cell_type != self.test_cell_type:
-          # Argsort indices to preserve ordering.
-          argsort_indices = np.argsort(gather_indices[cell_type])
-          gather_indices_sorted = np.sort(gather_indices[cell_type])
-
-          example = base_example.copy()
-
-          for key in ["targets", "latents", "metrics_weights"]:
-            # Keep targets and latents corresponding to cell_type.
-            example_key = tf.gather(example[key], gather_indices_sorted)
-            # Ensure sure tensors are sorted by alphabetical TFs.
-            example[key] = tf.gather(example_key, argsort_indices)
-          yield example
-    
-    out_size = int(np.ceil(self.input_sequence_length / self.chunk_size))
-
-    types = {"index": tf.int64, 
-                 "inputs": tf.int64, 
-                 "targets": tf.int64, 
-                 "batch_prediction_key": tf.int64,
-                 "latents": tf.int32, 
-                 "metrics_weights": tf.float32}
-    shapes = {"index": tf.TensorShape([]), 
-                  "inputs": tf.TensorShape([out_size, 1, 1]), 
-                  "targets": tf.TensorShape([num_binary_predictions, 1, 1]), 
-                  "batch_prediction_key": tf.TensorShape([1,]),
-                  "latents": tf.TensorShape([num_binary_predictions, 1, 1]), 
-                  "metrics_weights": tf.TensorShape([num_binary_predictions, 1, 1])}
-
-    dataset = tf.data.Dataset.from_generator(gen, types, shapes)
-
-    """
     dataset = None
+
     for cell_type in self.cell_types:
-      for key in ["targets", "latents", "metrics_weights"]:
-        example[key] = tf.gather(example[key], gather_indices[cell_type])
-      if not dataset:
-        dataset = tf.data.Dataset.from_tensors(example)
-      else:
-        dataset = dataset.concatenate(tf.data.Dataset.from_tensors(example))
-    """
+      # Do not put test in train set!
+      if cell_type != self.test_cell_type:
+        # Argsort indices to preserve ordering.
+        argsort_indices = np.argsort(gather_indices[cell_type])
+        gather_indices_sorted = np.sort(gather_indices[cell_type])
+
+        # Each example is based off of base_example, using different indices.
+        example = base_example.copy()
+
+        for key in ["targets", "latents", "metrics_weights"]:
+          # Keep targets and latents corresponding to cell_type.
+          example_key = tf.gather(example[key], gather_indices_sorted)
+          # Ensure sure tensors are sorted by alphabetical TFs.
+          example[key] = tf.gather(example_key, argsort_indices)
+
+        # Each example is added to a new dataset, and the datasets are appended.
+        new_data = tf.data.Dataset.from_tensors(example)
+        if not dataset:
+          dataset = new_data
+        else:
+          dataset.concatenate(new_data)
+    
     return dataset
 
 
@@ -1033,6 +1016,7 @@ def tfti_transformer_base():
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("pretrain_steps", 0)
+  hparams.add_hparam("filter_negatives", False)
   return hparams
 
 
