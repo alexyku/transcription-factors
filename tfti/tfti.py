@@ -318,10 +318,6 @@ class BinaryImputationClassLabelModality(BinaryClassLabelModality):
     Returns:
       A float Tensor with shape [batch_size, nlabels, 1, hidden_size].
     """
-    # with tf.variable_scope("latent_zeroing", reuse=tf.AUTO_REUSE):
-    #   global_step = tf.to_float(tf.train.get_or_create_global_step())
-    #   mask = tf.to_float(self._model_hparams.pretrain_steps < global_step)
-    #   res = (mask * tf.to_float(res) + (1.0 - mask) * self.UNK_ID)
     with tf.variable_scope(self.name):
       res = set_embedding(x, self._vocab_size, self._body_input_depth)
       return tf.expand_dims(res, 2)  # [batch_size, nlabels, 1, hidden_size]
@@ -1061,7 +1057,6 @@ def tfti_transformer_base():
   hparams.add_hparam("multigpu", False)
   hparams.add_hparam("pos_weight", 25)
   hparams.add_hparam("latent_keep_prob", 0.5)
-  # hparams.add_hparam("pretrain_steps", 0)
   hparams.add_hparam("filter_negatives", False)
   hparams.add_hparam("scaled_loss", False)
   return hparams
