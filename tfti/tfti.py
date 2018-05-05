@@ -417,7 +417,8 @@ class DeepseaProblem(problem.Problem):
     """
     dataset = super().preprocess(dataset, mode, hparams)
     if mode == tf.estimator.ModeKeys.EVAL:
-      dataset = dataset.repeat(count=10)
+      # Use --eval_steps to control how long we evaluate.
+      dataset = dataset.repeat(count=99999)
     if hparams.get("filter_negatives"):
       dataset = dataset.filter(lambda ex: tf.reduce_any(tf.equal(ex["targets"], tf.constant(1, dtype=tf.int64))))
     return dataset
