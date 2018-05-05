@@ -779,25 +779,15 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
 
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
+    
     # Indices for TF labels specific to GM12878 cell type.
     # These are ordered so TFs are alphabetical
-    
     gather_indices = self.targets_gather_indices()
-    
-    # Argsort indices to preserve ordering.
-    argsort_indices = np.argsort(gather_indices)
-    gather_indices_sorted = np.sort(gather_indices)
 
     # Keep targets and latents corresponding to GM12878 (LCL cell line).
-    targets = tf.gather(example["targets"], gather_indices_sorted)
-    latents = tf.gather(example["latents"], gather_indices_sorted)
-    metrics_weights = tf.gather(example["metrics_weights"],
-                                gather_indices_sorted)
-    
-    # Ensure sure tensors are sorted by alphabetical TFs.
-    example["targets"] = tf.gather(targets, argsort_indices)
-    example["latents"] = tf.gather(latents, argsort_indices)
-    example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
+    targets = tf.gather(example["targets"], gather_indices)
+    latents = tf.gather(example["latents"], gather_indices)
+    metrics_weights = tf.gather(example["metrics_weights"], gather_indices)
     return example
 
 
@@ -815,25 +805,15 @@ class H1hescDeepseaProblem(TftiDeepseaProblem):
 
   def preprocess_example(self, example, mode, hparams):
     example = super().preprocess_example(example, mode, hparams)
-    # Indices for TF labels specific to GM12878 cell type.
-    # These are ordered so TFs are alphabetical
-    
-    gather_indices = self.targets_gather_indices()
-    
-    # Argsort indices to preserve ordering.
-    argsort_indices = np.argsort(gather_indices)
-    gather_indices_sorted = np.sort(gather_indices)
 
+    # Indices for TF labels specific to GM12878 cell type.
+    # These are ordered so TFs are alphabetical    
+    gather_indices = self.targets_gather_indices()
+ 
     # Keep targets and latents corresponding to H1-hESC.
-    targets = tf.gather(example["targets"], gather_indices_sorted)
-    latents = tf.gather(example["latents"], gather_indices_sorted)
-    metrics_weights = tf.gather(example["metrics_weights"],
-                                gather_indices_sorted)
-    
-    # Ensure sure tensors are sorted by alphabetical TFs.
-    example["targets"] = tf.gather(targets, argsort_indices)
-    example["latents"] = tf.gather(latents, argsort_indices)
-    example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
+    targets = tf.gather(example["targets"], gather_indices)
+    latents = tf.gather(example["latents"], gather_indices)
+    metrics_weights = tf.gather(example["metrics_weights"], gather_indices)
     return example
 
 
@@ -940,18 +920,14 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     for cell_type in self.cell_types:
       # Do not put test in train set!
       if cell_type != self.test_cell_type:
-        # Argsort indices to preserve ordering.
-        argsort_indices = np.argsort(gather_indices[cell_type])
-        gather_indices_sorted = np.sort(gather_indices[cell_type])
 
+        cell_type_indices = gather_indices[cell_type]
         # Each example is based off of base_example, using different indices.
         example = base_example.copy()
 
         for key in ["targets", "latents", "metrics_weights"]:
           # Keep targets and latents corresponding to cell_type.
-          example_key = tf.gather(example[key], gather_indices_sorted)
-          # Ensure sure tensors are sorted by alphabetical TFs.
-          example[key] = tf.gather(example_key, argsort_indices)
+          example[key] = tf.gather(example[key], cell_type_indices)
 
         # Each example is added to a new dataset, and the datasets are appended.
         new_data = tf.data.Dataset.from_tensors(example)
