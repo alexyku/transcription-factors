@@ -785,9 +785,9 @@ class Gm12878DeepseaProblem(TftiDeepseaProblem):
     gather_indices = self.targets_gather_indices()
 
     # Keep targets and latents corresponding to GM12878 (LCL cell line).
-    targets = tf.gather(example["targets"], gather_indices)
-    latents = tf.gather(example["latents"], gather_indices)
-    metrics_weights = tf.gather(example["metrics_weights"], gather_indices)
+    example["targets"] = tf.gather(example["targets"], gather_indices)
+    example["latents"] = tf.gather(example["latents"], gather_indices)
+    example["metrics_weights"] = tf.gather(example["metrics_weights"], gather_indices)
     return example
 
 
@@ -811,9 +811,9 @@ class H1hescDeepseaProblem(TftiDeepseaProblem):
     gather_indices = self.targets_gather_indices()
  
     # Keep targets and latents corresponding to H1-hESC.
-    targets = tf.gather(example["targets"], gather_indices)
-    latents = tf.gather(example["latents"], gather_indices)
-    metrics_weights = tf.gather(example["metrics_weights"], gather_indices)
+    example["targets"] = tf.gather(example["targets"], gather_indices)
+    example["latents"] = tf.gather(example["latents"], gather_indices)
+    example["metrics_weights"] = tf.gather(example["metrics_weights"], gather_indices)
     return example
 
 
