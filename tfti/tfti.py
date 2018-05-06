@@ -820,20 +820,20 @@ class H1hescDeepseaProblem(TftiDeepseaProblem):
     
     gather_indices = self.targets_gather_indices()
     
-    # Argsort indices to preserve ordering.
-    argsort_indices = np.argsort(gather_indices)
-    gather_indices_sorted = np.sort(gather_indices)
+    # Hardcoding in the order needed to match GM12878.
+    gm12878_order = [8, 5, 7, 9, 0, 1, 2, 10, 11, 12, 15, 34, 17, 18, \
+                     21, 20, 23, 24, 25, 26, 28, 29, 31, 3, 4, 6, 33, \
+                     13, 14, 16, 19, 22, 27, 30, 32]
 
-    # Keep targets and latents corresponding to H1-hESC.
-    targets = tf.gather(example["targets"], gather_indices_sorted)
-    latents = tf.gather(example["latents"], gather_indices_sorted)
-    metrics_weights = tf.gather(example["metrics_weights"],
-                                gather_indices_sorted)
+    targets = tf.gather(example["targets"], gather_indices)
+    latents = tf.gather(example["latents"], gather_indices)
+    metrics_weights = tf.gather(example["metrics_weights"], gather_indices)
+
+    # Reformat to match GM12878 order.
+    example["targets"] = tf.gather(targets, gm12878_order)
+    example["latents"] = tf.gather(latents, gm12878_order)
+    example["metrics_weights"] = tf.gather(metrics_weights, gm12878_order)
     
-    # Ensure sure tensors are sorted by alphabetical TFs.
-    example["targets"] = tf.gather(targets, argsort_indices)
-    example["latents"] = tf.gather(latents, argsort_indices)
-    example["metrics_weights"] = tf.gather(metrics_weights, argsort_indices)
     return example
 
 
