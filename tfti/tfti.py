@@ -964,7 +964,7 @@ class TftiMulticellEvalProblem(TftiMulticellProblem):
     See base class for method signature.
     """
 
-    base_example = super().preprocess_example(example, mode, hparams)
+    base_example = TftiDeepseaProblem.preprocess_example(self, example, mode, hparams)
 
     gather_indices, _ = self.get_overlapping_indices_multicell()
 
