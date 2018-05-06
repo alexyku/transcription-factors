@@ -941,6 +941,9 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     for cell_type in self.cell_types:
       # Do not put test in train set!
       if cell_type != self.test_cell_type:
+
+        example = base_example.copy()
+
         for key in ["targets", "latents", "metrics_weights"]:
           example[key] = tf.gather(example[key], gather_indices[cell_type])
 
@@ -964,7 +967,7 @@ class TftiMulticellEvalProblem(TftiMulticellProblem):
     See base class for method signature.
     """
 
-    base_example = TftiDeepseaProblem.preprocess_example(self, example, mode, hparams)
+    example = TftiDeepseaProblem.preprocess_example(self, example, mode, hparams)
 
     gather_indices, _ = self.get_overlapping_indices_multicell()
 
