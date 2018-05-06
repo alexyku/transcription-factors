@@ -936,9 +936,6 @@ class TftiMulticellProblem(TftiDeepseaProblem):
 
     gather_indices, _ = self.get_overlapping_indices_multicell()
 
-    print(gather_indices)
-    stop_runnin()
-
     dataset = None
 
     for cell_type in self.cell_types:
@@ -956,6 +953,30 @@ class TftiMulticellProblem(TftiDeepseaProblem):
 
     return dataset
 
+
+@registry.register_problem("genomics_binding_deepsea_multicell_eval")
+class TftiMulticellEvalProblem(TftiMulticellProblem):
+  """Evaluates TftiMulticellProblem on the held out cell type."""
+
+  def preprocess_example(self, example, mode, hparams):
+    """Makes one example for each cell type, including only intersecting marks.
+
+    See base class for method signature.
+    """
+
+    base_example = super().preprocess_example(example, mode, hparams)
+
+    gather_indices, _ = self.get_overlapping_indices_multicell()
+
+    # Only eval on test.
+    cell_type = self.test_cell_type
+
+    for key in ["targets", "latents", "metrics_weights"]:
+      example[key] = tf.gather(example[key], gather_indices[cell_type])
+
+    dataset = tf.data.Dataset.from_tensors(example)
+
+    return dataset
 
 ################################################################################
 ################################### MODELS #####################################
