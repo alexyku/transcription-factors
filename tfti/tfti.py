@@ -821,9 +821,9 @@ class H1hescDeepseaProblem(TftiDeepseaProblem):
     gather_indices = self.targets_gather_indices()
     
     # Hardcoding in the order needed to match GM12878.
-    gm12878_order = [8, 5, 7, 9, 0, 1, 2, 10, 11, 12, 15, 34, 17, 18, \
-                     21, 20, 23, 24, 25, 26, 28, 29, 31, 3, 4, 6, 33, \
-                     13, 14, 16, 19, 22, 27, 30, 32]
+    gm12878_order = [11, 10, 15, 8, 7, 9, 1, 34, 17, 23, 33, 25, 26, \
+                     31, 29, 5, 6, 12, 13, 16, 19, 27, 0, 2, 4, 18, \
+                     21, 20, 24, 28, 3, 14, 22, 30, 32]
 
     targets = tf.gather(example["targets"], gather_indices)
     latents = tf.gather(example["latents"], gather_indices)
