@@ -84,40 +84,30 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
   """
   logits = keep_first_dims(logits, 2)
   labels = keep_first_dims(labels, 2)
+  predictions = tf.nn.sigmoid(logits)
 
   # `metrics_weights` is an alternative to `weights_fn`.
   if features and "metrics_weights" in features:
-    weights = keep_first_dims(features["metrics_weights"], 2)
+    metrics_weights = keep_first_dims(features["metrics_weights"], 2)
   else:
-    weights = tf.ones(common_layers.shape_list(labels))  # Uniform weights.
+    metrics_weights = tf.ones(common_layers.shape_list(labels))  # Uniform weights.
 
-  def single_auc(elems):
-    """Computes the AUC for a single label.
+  nlabels = int(labels.shape[1])
+  aucs = []
+  weights = []
 
-    Args:
-      elems: A tuple containing:
-        labels: A Tensor with shape [batch].
-        predictions: A Tensor with shape [batch].
-        weights: A Tensor with shape [batch].
+  for i in range(nlabels):
+    _, auc_op = tf.metrics.auc(
+        curve=curve,
+        labels=labels[:, i],
+        predictions=predictions[:, i],
+        weights=metrics_weights[:, i],
+        updates_collections=tf.GraphKeys.METRIC_VARIABLES,
+    )
+    aucs.append(auc_op)
+    weights.append(tf.constant(1.0))
 
-    Returns:
-      A tuple containing:
-        auc_op: A Tensor with shape [1].
-        weight: A Tensor with shape [1].
-    """
-    auc, auc_op = tf.metrics.auc(
-      labels=elems[0], predictions=elems[1], weights=elems[2], curve=curve,
-      updates_collections=tf.GraphKeys.METRIC_VARIABLES)
-    # Since elems is a 3-tuple, `tf.map_fn` requires we return a 3-tuple.
-    weight =  tf.constant(1.0) * tf.cast(tf.reduce_any(tf.equal(elems[2], tf.constant(1.0))), dtype=tf.float32)
-    return auc_op, weight, tf.constant(1.0)
-  
-  predictions = tf.nn.sigmoid(logits)
-  labels = tf.to_float(tf.transpose(labels, [1, 0]))  # [nlabels, batch]
-  predictions = tf.transpose(predictions, [1, 0])
-  weights = tf.transpose(weights, [1, 0])
-  aucs, weight, _ = tf.map_fn(single_auc, elems=(labels, predictions, weights))
-  return aucs, weight
+  return tf.stack(aucs), tf.stack(weights)
 
 
 def average_auc(logits, features, labels, curve,  weights_fn=None):
