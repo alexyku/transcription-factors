@@ -24,14 +24,22 @@ args = parser.parse_args()
 # Read in predictions
 # File format from predicted deepsea files is "<Line #>,<FASTA seq ID>,<Comma delimited list of 919 predictions>"
 predictions = pd.read_csv(args.deepsea_predictions_file[0])
+
+# sort by sequence ids. These may get jumpled in the file merging process
+predictions['id']= predictions['name'].str.extract('(\d+)').astype(int)
+predictions = predictions.sort_values('id')
+predictions = predictions.drop(columns=['id'])
+
 out_file = args.output_file[0]
 targets_file = args.mat_target_file[0]
 
-
 # read in targets from mat file
 mat = loadmat(targets_file)
-targets = mat['validdata']
-
+try:
+    targets = mat['validdata']
+except:
+    targets = mat['testdata']
+    
 # Calculate ROC and PR for all 919 elements
 roc_auc_scores = []
 auprc_scores = []
@@ -48,8 +56,8 @@ for i in predictions.columns[2:]:
     col += 1
         
 # calculate mean scores        
-roc_auc_mean = sum(roc_auc_scores) / float(len(roc_auc_scores))
-auprc_mean = sum(auprc_scores) / float(len(auprc_scores))
+roc_auc_mean = np.nanmean(roc_auc_scores)
+auprc_mean = np.nanmean(auprc_scores)
 
 # append means to other scores
 roc_auc_scores.insert(0, "auROC")
