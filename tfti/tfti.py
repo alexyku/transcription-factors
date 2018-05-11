@@ -105,7 +105,7 @@ def set_auc(logits, features, labels, curve, weights_fn=None):
         updates_collections=tf.GraphKeys.METRIC_VARIABLES,
     )
     aucs.append(auc_op)
-    weights.append(tf.constant(1.0))
+    weights.append(metrics_weights[:, i])
 
   return tf.stack(aucs), tf.stack(weights)
 
