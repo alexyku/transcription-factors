@@ -215,7 +215,11 @@ class BinaryClassLabelModality(modality.Modality):
       logits: A float Tensor with shape [batch_size, nlabels, 1, 1].
 
     """
-    with tf.variable_scope(self.name):
+    scope = tf.variable_scope(self.name)
+    if self._model_hparams.get("gpu_compat"):
+      scope = scope and tf.device("/gpu:0")
+
+    with scope:
       x = body_output  # [batch_size, nlabels, 1, hidden_size]
       x = common_layers.flatten4d3d(x)
       if not self._model_hparams.get("multigpu"):
@@ -854,7 +858,6 @@ class TftiMulticellProblem(TftiDeepseaProblem):
     names = self.load_names(namefile)
 
     valid_cell_types = list(map(lambda x: x.split("|")[0], names))
-    print(valid_cell_types)
 
     # Make sure cell type parameters can be found in our data.
     for cell_type in self.cell_types:
@@ -1064,6 +1067,7 @@ def tfti_transformer_base():
   hparams.batch_size = 64
   hparams.add_hparam("multigpu", False)
   hparams.add_hparam("pos_weight", 25)
+  hparams.add_hparam("gpu_compat", False)
   hparams.add_hparam("latent_keep_prob", 0.5)
   hparams.add_hparam("filter_negatives", False)
   hparams.add_hparam("scaled_loss", False)
